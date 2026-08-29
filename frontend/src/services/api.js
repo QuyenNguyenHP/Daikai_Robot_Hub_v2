@@ -1,0 +1,76 @@
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+async function request(path, options = {}) {
+  const response = await fetch(`${API_URL}${path}`, options)
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const detail = payload.detail
+    const message = typeof detail === 'string'
+      ? detail
+      : detail?.message || `Request failed (${response.status})`
+    throw new Error(message)
+  }
+  return payload
+}
+
+export const getHealth = () => request('/api/health')
+
+export const getRobotBattery = () => request('/api/robot/battery')
+
+export function getRobotBatteryWebSocketUrl() {
+  const url = new URL('/api/robot/battery/ws', API_URL)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
+export const getRobotControlStatus = () => request('/api/robot/control/status')
+
+export const getRobotServices = () => request('/api/robot/services')
+
+export function switchRobotService(name, enabled) {
+  return request('/api/robot/services/switch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, enabled }),
+  })
+}
+
+export const getRobotMode = () => request('/api/robot/mode')
+
+export function getRobotModeWebSocketUrl() {
+  const url = new URL('/api/robot/mode/ws', API_URL)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
+export function controlRobot(action, options = {}) {
+  return request('/api/robot/control', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...options }),
+  })
+}
+
+export function speakOnRobot(text) {
+  return request('/api/robot/speak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+}
+
+export function setRobotVolume(volume) {
+  return request('/api/robot/volume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ volume }),
+  })
+}
+
+export function setRobotLed(red, green, blue, keepOn = false) {
+  return request('/api/robot/led', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ red, green, blue, keep_on: keepOn }),
+  })
+}
