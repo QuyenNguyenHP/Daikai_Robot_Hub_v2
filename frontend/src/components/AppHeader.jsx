@@ -3,6 +3,7 @@ import drumsLogo from '../../photos/DRUMS_logo.png'
 
 const NAV_ITEMS = [
   ['console', 'Console'],
+  ['teleoperation', 'Teleoperation'],
   ['services', 'System Services'],
 ]
 

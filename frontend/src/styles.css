@@ -165,6 +165,29 @@ main { max-width: 1440px; margin: 0 auto; padding: 48px clamp(18px, 4vw, 64px) 7
 .service-toggle:disabled { opacity: .42; cursor: not-allowed; }
 .services-empty { margin: 0; padding: 18px; color: var(--muted); text-align: center; font-size: 12px; }
 .services-error { margin: 12px 0 0; }
+.teleoperation-page { width: 100%; max-width: 900px; min-height: calc(100vh - 194px); margin: 0 auto; }
+.teleoperation-panel { padding: 24px; }
+.teleoperation-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.teleoperation-heading h2 { margin: 4px 0 0; font: 600 21px Manrope, sans-serif; }
+.teleoperation-warning { margin: 20px 0; padding: 13px 15px; color: #ffd3a5; background: rgba(255, 164, 75, .08); border: 1px solid rgba(255, 164, 75, .24); border-radius: 10px; font-size: 12px; line-height: 1.5; }
+.teleoperation-notification { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 14px; margin-bottom: 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(67, 210, 160, .24); background: rgba(67, 210, 160, .08); }
+.teleoperation-notification.stopped { border-color: var(--panel-border); background: rgba(104, 127, 158, .09); }
+.teleoperation-notification strong, .teleoperation-notification span { display: block; }
+.teleoperation-notification strong { color: #9af2d0; font: 600 12px Manrope, sans-serif; }
+.teleoperation-notification.stopped strong { color: #dce6f2; }
+.teleoperation-notification span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.teleoperation-notification > button { padding: 0; color: var(--muted); background: transparent; border: 0; cursor: pointer; font-size: 20px; line-height: 1; }
+.quest-access-card { display: grid; grid-template-columns: minmax(200px, .8fr) minmax(260px, 1.2fr) auto; align-items: center; gap: 14px; margin-bottom: 18px; padding: 14px; border-radius: 10px; background: rgba(85, 168, 223, .07); border: 1px solid rgba(85, 168, 223, .22); }
+.quest-access-card span, .quest-access-card strong { display: block; }
+.quest-access-card span { color: var(--cyan); font-size: 9px; font-weight: 700; letter-spacing: .14em; }
+.quest-access-card strong { margin-top: 4px; color: #dce6f2; font-size: 11px; line-height: 1.4; }
+.quest-access-card code { min-width: 0; overflow: hidden; color: #9ed7ff; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.teleoperation-controls { display: grid; grid-template-columns: minmax(180px, .6fr) minmax(240px, 1fr) auto; align-items: end; gap: 14px; }
+.teleoperation-controls label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.teleoperation-controls select { height: 42px; padding: 0 12px; border-radius: 9px; color: #dce6f2; background: #091522; border: 1px solid var(--panel-border); }
+.teleoperation-config { min-height: 42px; display: grid; align-content: center; gap: 3px; color: var(--muted); font-size: 10px; }
+.teleoperation-output { max-height: 300px; margin: 20px 0 0; padding: 14px; overflow: auto; border-radius: 10px; color: #b8c8d9; background: #03080f; border: 1px solid var(--panel-border); font: 10px/1.5 monospace; white-space: pre-wrap; }
+.teleoperation-panel > .error-message { margin: 14px 0 0; }
 .robot-control-panel { padding: 20px 22px; }
 .control-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .control-title-row h2 { margin: 4px 0 0; font: 600 18px Manrope, sans-serif; }
@@ -293,6 +316,9 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
   .stereo-monitor-grid, .stereo-details-grid { grid-template-columns: 1fr; }
   .stereo-page-heading { align-items: flex-start; flex-direction: column; }
   .stereo-class-editor { grid-template-columns: 1fr; align-items: stretch; }
+  .teleoperation-controls { grid-template-columns: 1fr; align-items: stretch; }
+  .quest-access-card { grid-template-columns: 1fr auto; }
+  .quest-access-card > div { grid-column: 1 / -1; }
 }
 
 @media (max-width: 620px) {
@@ -322,6 +348,10 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
   .system-services-page, .system-services-page .services-panel { min-height: calc(100vh - 150px); }
   .stereo-class-controls { grid-template-columns: 1fr; }
   .model-loading-overlay { inset: 68px 0 0; }
+  .teleoperation-heading { align-items: flex-start; flex-direction: column; }
+  .quest-access-card { grid-template-columns: 1fr; }
+  .quest-access-card > div { grid-column: auto; }
+  .quest-access-card code { white-space: normal; overflow-wrap: anywhere; }
 }
 
 @media (prefers-reduced-motion: reduce) {

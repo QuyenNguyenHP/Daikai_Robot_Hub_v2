@@ -34,6 +34,11 @@ from backend.robot_services import (
     RobotServiceManager,
     RobotServiceProtectedError,
 )
+from backend.robot_teleoperation import (
+    RobotTeleoperationService,
+    TeleoperationError,
+    TeleoperationStateError,
+)
 
 
 @asynccontextmanager
@@ -42,6 +47,7 @@ async def lifespan(app: FastAPI):
     app.state.robot_control = RobotControlService()
     app.state.robot_audio = RobotAudioService()
     app.state.robot_services = RobotServiceManager()
+    app.state.robot_teleoperation = RobotTeleoperationService()
     app.state.robot_battery.start()
     try:
         yield
@@ -49,6 +55,7 @@ async def lifespan(app: FastAPI):
         app.state.robot_battery.stop()
         app.state.robot_control.stop()
         app.state.robot_audio.stop()
+        app.state.robot_teleoperation.shutdown()
 
 
 app = FastAPI(
@@ -88,6 +95,10 @@ def robot_control(request: Request) -> RobotControlService:
 
 def robot_services(request: Request) -> RobotServiceManager:
     return request.app.state.robot_services
+
+
+def robot_teleoperation(request: Request) -> RobotTeleoperationService:
+    return request.app.state.robot_teleoperation
 
 
 class SpeechRequest(BaseModel):
@@ -131,6 +142,10 @@ class ControlRequest(BaseModel):
 class ServiceSwitchRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     enabled: bool
+
+
+class TeleoperationStartRequest(BaseModel):
+    input_mode: Literal["hand", "controller"] = "controller"
 
 
 @app.get("/api/health")
@@ -185,6 +200,33 @@ def switch_robot_service(
     except (RobotServiceBusyError, RobotServiceProtectedError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except RobotServiceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/robot/teleoperation/status")
+def teleoperation_status(request: Request) -> dict[str, object]:
+    return robot_teleoperation(request).status()
+
+
+@app.post("/api/robot/teleoperation/start")
+def start_teleoperation(
+    request: Request, payload: TeleoperationStartRequest
+) -> dict[str, object]:
+    try:
+        return robot_teleoperation(request).start(payload.input_mode)
+    except TeleoperationStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except TeleoperationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/robot/teleoperation/stop")
+def stop_teleoperation(request: Request) -> dict[str, object]:
+    try:
+        return robot_teleoperation(request).stop()
+    except TeleoperationStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except TeleoperationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 

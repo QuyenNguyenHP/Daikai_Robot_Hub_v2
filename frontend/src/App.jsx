@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AppHeader } from './components/AppHeader'
 import { FirstPage } from './pages/FirstPage'
 import { SystemServicesPage } from './pages/SystemServicesPage'
+import { TeleoperationPage } from './pages/TeleoperationPage'
 import { getHealth } from './services/api'
 
 
@@ -35,6 +36,7 @@ export default function App() {
           </div>
         )}
         {page === 'console' && <FirstPage />}
+        {page === 'teleoperation' && <TeleoperationPage />}
         {page === 'services' && <SystemServicesPage />}
       </main>
       <footer>DAIKAI ROBOT HUB</footer>

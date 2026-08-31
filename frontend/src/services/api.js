@@ -35,6 +35,20 @@ export function switchRobotService(name, enabled) {
   })
 }
 
+export const getTeleoperationStatus = () => request('/api/robot/teleoperation/status')
+
+export function startTeleoperation(inputMode) {
+  return request('/api/robot/teleoperation/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input_mode: inputMode }),
+  })
+}
+
+export function stopTeleoperation() {
+  return request('/api/robot/teleoperation/stop', { method: 'POST' })
+}
+
 export const getRobotMode = () => request('/api/robot/mode')
 
 export function getRobotModeWebSocketUrl() {
