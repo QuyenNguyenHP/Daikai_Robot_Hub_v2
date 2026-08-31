@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  getRobotModeWebSocketUrl,
   getTeleoperationStatus,
   startTeleoperation,
   startTeleoperationTracking,
@@ -13,6 +14,8 @@ export function TeleoperationPanel() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notification, setNotification] = useState(null)
+  const [mode, setMode] = useState(null)
+  const [modeError, setModeError] = useState('')
   const mounted = useRef(true)
   const questHost = window.location.hostname
   const questUrl = `https://${questHost}:8012/?ws=wss://${questHost}:8012`
@@ -38,6 +41,48 @@ export function TeleoperationPanel() {
       window.clearInterval(timer)
     }
   }, [refresh])
+
+  useEffect(() => {
+    let active = true
+    let socket = null
+    let reconnectTimer = null
+    let reconnectDelay = 1000
+
+    const connect = () => {
+      socket = new WebSocket(getRobotModeWebSocketUrl())
+      socket.onopen = () => {
+        reconnectDelay = 1000
+        if (active) setModeError('')
+      }
+      socket.onmessage = (event) => {
+        if (!active) return
+        try {
+          const result = JSON.parse(event.data)
+          if (result.error) {
+            setModeError(result.error)
+          } else {
+            setMode(result)
+            setModeError('')
+          }
+        } catch {
+          setModeError('The robot mode update could not be decoded.')
+        }
+      }
+      socket.onclose = () => {
+        if (!active) return
+        setModeError('Robot mode connection lost. Reconnecting…')
+        reconnectTimer = window.setTimeout(connect, reconnectDelay)
+        reconnectDelay = Math.min(reconnectDelay * 2, 5000)
+      }
+    }
+
+    connect()
+    return () => {
+      active = false
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
+    }
+  }, [])
 
   const start = async () => {
     setBusy(true)
@@ -109,6 +154,8 @@ export function TeleoperationPanel() {
     }
   }
 
+  const launchReady = mode?.fsm_id === 811 && !mode?.stale && !modeError
+
   return (
     <section className="panel teleoperation-panel">
       <div className="teleoperation-heading">
@@ -131,6 +178,19 @@ export function TeleoperationPanel() {
         Motion is enabled. On the tested R1-A5 firmware, arm SDK mode 816 may block
         locomotion commands. Keep the robot in view and the emergency stop ready.
       </p>
+
+      <div className={`teleoperation-mode ${launchReady ? 'ready' : ''}`}>
+        <div>
+          <span>ROBOT MODE</span>
+          <strong>{mode?.display || 'Waiting for robot mode…'}</strong>
+        </div>
+        <small>
+          {launchReady
+            ? 'Ready to launch teleoperation'
+            : 'Launch requires locomotion mode 811'}
+        </small>
+      </div>
+      {modeError && <p className="mode-detail teleoperation-mode-error">{modeError}</p>}
 
       {notification && (
         <div className={`teleoperation-notification ${notification.type}`} role="status">
@@ -177,7 +237,14 @@ export function TeleoperationPanel() {
             <button className="button danger" disabled={busy || status.stopping} onClick={stop}>Stop teleoperation</button>
           </div>
         ) : (
-          <button className="button primary" disabled={busy} onClick={start}>Launch teleoperation</button>
+          <button
+            className="button primary"
+            disabled={busy || !launchReady}
+            onClick={start}
+            title={launchReady ? 'Launch teleoperation' : 'Robot must be in locomotion mode 811'}
+          >
+            Launch teleoperation
+          </button>
         )}
       </div>
 

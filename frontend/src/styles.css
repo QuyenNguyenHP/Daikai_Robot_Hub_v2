@@ -170,6 +170,14 @@ main { max-width: 1440px; margin: 0 auto; padding: 48px clamp(18px, 4vw, 64px) 7
 .teleoperation-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .teleoperation-heading h2 { margin: 4px 0 0; font: 600 21px Manrope, sans-serif; }
 .teleoperation-warning { margin: 20px 0; padding: 13px 15px; color: #ffd3a5; background: rgba(255, 164, 75, .08); border: 1px solid rgba(255, 164, 75, .24); border-radius: 10px; font-size: 12px; line-height: 1.5; }
+.teleoperation-mode { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; padding: 12px 14px; border-radius: 10px; background: rgba(6, 15, 26, .6); border: 1px solid var(--panel-border); }
+.teleoperation-mode span, .teleoperation-mode strong { display: block; }
+.teleoperation-mode span { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .13em; }
+.teleoperation-mode strong { margin-top: 3px; color: #dce6f2; font: 600 13px Manrope, sans-serif; }
+.teleoperation-mode small { color: #ffb7bd; font-size: 10px; text-align: right; }
+.teleoperation-mode.ready { border-color: rgba(67, 210, 160, .25); background: rgba(67, 210, 160, .07); }
+.teleoperation-mode.ready strong, .teleoperation-mode.ready small { color: #9af2d0; }
+.teleoperation-mode-error { margin: -6px 0 14px; color: #ffb7bd; }
 .teleoperation-notification { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 14px; margin-bottom: 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(67, 210, 160, .24); background: rgba(67, 210, 160, .08); }
 .teleoperation-notification.stopped { border-color: var(--panel-border); background: rgba(104, 127, 158, .09); }
 .teleoperation-notification strong, .teleoperation-notification span { display: block; }
@@ -247,6 +255,22 @@ input[type='range'] { width: 100%; accent-color: var(--cyan); margin: 14px 0 2px
 .status-pill, .sample-count { padding: 7px 10px; border-radius: 99px; color: var(--muted); border: 1px solid var(--panel-border); background: rgba(4, 12, 21, .4); font-size: 11px; display: flex; align-items: center; gap: 7px; }
 .status-pill.live { color: var(--cyan); }
 .first-page { display: grid; gap: 20px; }
+.video-stream-panel { padding: 22px; }
+.video-stream-heading { margin-bottom: 12px; }
+.video-stream-description { margin: 0 0 16px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.video-stream-prerequisite { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 9px 11px; border-radius: 9px; color: var(--muted); background: rgba(6, 15, 26, .5); border: 1px solid var(--panel-border); font-size: 10px; }
+.video-stream-prerequisite span { display: flex; align-items: center; gap: 7px; }
+.video-stream-prerequisite i { width: 7px; height: 7px; border-radius: 50%; background: #67758a; }
+.video-stream-prerequisite strong { color: #ffb7bd; font-weight: 600; }
+.video-stream-prerequisite.ready i { background: #43d2a0; box-shadow: 0 0 8px rgba(67, 210, 160, .5); }
+.video-stream-prerequisite.ready strong { color: #9af2d0; }
+.video-stream-service-error { margin: -7px 0 12px; color: #ffb7bd; }
+.video-stream-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.video-stream-form label { display: grid; gap: 7px; color: #b7c4d4; font-size: 11px; font-weight: 600; }
+.video-stream-panel > .error-message, .video-stream-panel > .success-message { margin: 12px 0 0; }
+.video-stream-output { margin-top: 12px; color: var(--muted); font-size: 10px; }
+.video-stream-output summary { cursor: pointer; }
+.video-stream-output pre { max-height: 180px; padding: 10px; overflow: auto; border-radius: 8px; color: #b8c8d9; background: #03080f; white-space: pre-wrap; }
 .speech-panel { padding: 22px; }
 .speech-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
 .speech-form .text-input { min-width: 0; }
@@ -337,6 +361,7 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
   .camera-panel, .enroll-form, .capture-panel { padding: 15px; }
   .camera-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .speech-form { grid-template-columns: 1fr; }
+  .video-stream-form { grid-template-columns: 1fr; }
   .speech-details { flex-direction: column; gap: 6px; }
   .polishing-options { grid-template-columns: 1fr; }
   .led-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -352,6 +377,8 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
   .stereo-class-controls { grid-template-columns: 1fr; }
   .model-loading-overlay { inset: 68px 0 0; }
   .teleoperation-heading { align-items: flex-start; flex-direction: column; }
+  .teleoperation-mode { align-items: flex-start; flex-direction: column; }
+  .teleoperation-mode small { text-align: left; }
   .quest-access-card { grid-template-columns: 1fr; }
   .quest-access-card > div { grid-column: auto; }
   .quest-access-card code { white-space: normal; overflow-wrap: anywhere; }

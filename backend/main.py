@@ -13,7 +13,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, IPvAnyAddress
 
 from backend.robot_battery import RobotBatteryService
 from backend.robot_control import (
@@ -39,6 +39,11 @@ from backend.robot_teleoperation import (
     TeleoperationError,
     TeleoperationStateError,
 )
+from backend.video_streaming import (
+    VideoStreamingError,
+    VideoStreamingService,
+    VideoStreamingStateError,
+)
 
 
 @asynccontextmanager
@@ -48,6 +53,7 @@ async def lifespan(app: FastAPI):
     app.state.robot_audio = RobotAudioService()
     app.state.robot_services = RobotServiceManager()
     app.state.robot_teleoperation = RobotTeleoperationService()
+    app.state.video_streaming = VideoStreamingService()
     app.state.robot_battery.start()
     try:
         yield
@@ -56,6 +62,7 @@ async def lifespan(app: FastAPI):
         app.state.robot_control.stop()
         app.state.robot_audio.stop()
         app.state.robot_teleoperation.shutdown()
+        app.state.video_streaming.shutdown()
 
 
 app = FastAPI(
@@ -99,6 +106,10 @@ def robot_services(request: Request) -> RobotServiceManager:
 
 def robot_teleoperation(request: Request) -> RobotTeleoperationService:
     return request.app.state.robot_teleoperation
+
+
+def video_streaming(request: Request) -> VideoStreamingService:
+    return request.app.state.video_streaming
 
 
 class SpeechRequest(BaseModel):
@@ -149,6 +160,10 @@ class TeleoperationStartRequest(BaseModel):
     input_mode: Literal["hand", "controller"] = "controller"
 
 
+class VideoStreamingStartRequest(BaseModel):
+    destination_ip: IPvAnyAddress
+
+
 @app.get("/api/health")
 def health(request: Request) -> dict[str, object]:
     return {
@@ -179,6 +194,50 @@ async def robot_battery_status_websocket(websocket: WebSocket) -> None:
 @app.get("/api/robot/control/status")
 def robot_control_status(request: Request) -> dict[str, object]:
     return robot_control(request).status()
+
+
+@app.get("/api/video-stream/status")
+def video_stream_status(request: Request) -> dict[str, object]:
+    return video_streaming(request).status()
+
+
+@app.post("/api/video-stream/start")
+def start_video_stream(
+    request: Request, payload: VideoStreamingStartRequest
+) -> dict[str, object]:
+    try:
+        services = robot_services(request).list().get("services", [])
+        stereo_service = next(
+            (item for item in services if item.get("name") == "stereo_patch_pc1"),
+            None,
+        )
+        if stereo_service is None:
+            raise VideoStreamingStateError(
+                "Required robot service 'stereo_patch_pc1' was not reported."
+            )
+        if not stereo_service.get("enabled"):
+            raise VideoStreamingStateError(
+                "Turn on robot service 'stereo_patch_pc1' before streaming."
+            )
+        return video_streaming(request).start(str(payload.destination_ip))
+    except RobotServiceBusyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RobotServiceError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except VideoStreamingStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except VideoStreamingError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/video-stream/stop")
+def stop_video_stream(request: Request) -> dict[str, object]:
+    try:
+        return video_streaming(request).stop()
+    except VideoStreamingStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except VideoStreamingError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.get("/api/robot/services")
@@ -214,7 +273,17 @@ def start_teleoperation(
     request: Request, payload: TeleoperationStartRequest
 ) -> dict[str, object]:
     try:
+        mode = robot_control(request).mode()
+        if mode.get("fsm_id") != 811:
+            raise TeleoperationStateError(
+                "Teleoperation can only launch when the robot is in locomotion mode 811; "
+                f"current mode is {mode.get('display', 'unknown')}."
+            )
         return robot_teleoperation(request).start(payload.input_mode)
+    except RobotControlBusyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RobotControlError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except TeleoperationStateError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except TeleoperationError as error:

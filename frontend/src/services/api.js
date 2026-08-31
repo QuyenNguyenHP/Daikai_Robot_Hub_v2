@@ -25,6 +25,20 @@ export function getRobotBatteryWebSocketUrl() {
 
 export const getRobotControlStatus = () => request('/api/robot/control/status')
 
+export const getVideoStreamStatus = () => request('/api/video-stream/status')
+
+export function startVideoStream(destinationIp) {
+  return request('/api/video-stream/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destination_ip: destinationIp }),
+  })
+}
+
+export function stopVideoStream() {
+  return request('/api/video-stream/stop', { method: 'POST' })
+}
+
 export const getRobotServices = () => request('/api/robot/services')
 
 export function switchRobotService(name, enabled) {

@@ -3,6 +3,7 @@ import { BatteryStatus } from '../components/BatteryStatus'
 import { RobotSpeechPanel } from '../components/RobotSpeechPanel'
 import { RobotControlPanel } from '../components/RobotControlPanel'
 import { RobotLedPanel } from '../components/RobotLedPanel'
+import { VideoStreamingPanel } from '../components/VideoStreamingPanel'
 import { setRobotVolume, speakOnRobot } from '../services/api'
 
 export function FirstPage() {
@@ -64,6 +65,7 @@ export function FirstPage() {
             />
           </div>
           <RobotLedPanel />
+          <VideoStreamingPanel />
         </div>
         <RobotControlPanel />
       </section>
