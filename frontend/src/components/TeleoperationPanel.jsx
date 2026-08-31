@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getTeleoperationStatus,
   startTeleoperation,
+  startTeleoperationTracking,
   stopTeleoperation,
 } from '../services/api'
 
@@ -39,11 +40,6 @@ export function TeleoperationPanel() {
   }, [refresh])
 
   const start = async () => {
-    const confirmed = window.confirm(
-      'Start R1-A5 teleoperation with --motion? Keep the emergency stop ready. ' +
-      'The tested R1 firmware may not accept locomotion commands in FSM mode 816.'
-    )
-    if (!confirmed) return
     setBusy(true)
     setError('')
     try {
@@ -51,7 +47,28 @@ export function TeleoperationPanel() {
       setStatus(result)
       setNotification({
         type: 'started',
-        message: 'Teleoperation started. Open the address below in the Quest 3 browser.',
+        message: 'XR server launched. Connect Quest 3, then press Start robot tracking.',
+      })
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const beginTracking = async () => {
+    const confirmed = window.confirm(
+      'Start robot tracking now? Keep the emergency stop ready and align your arms ' +
+      'with the robot before continuing.'
+    )
+    if (!confirmed) return
+    setBusy(true)
+    setError('')
+    try {
+      setStatus(await startTeleoperationTracking())
+      setNotification({
+        type: 'started',
+        message: 'Robot tracking started. The frontend button replaced keyboard R.',
       })
     } catch (requestError) {
       setError(requestError.message)
@@ -71,7 +88,7 @@ export function TeleoperationPanel() {
       setStatus(await stopTeleoperation())
       setNotification({
         type: 'stopped',
-        message: 'Teleoperation stopped. The Quest 3 session has been closed.',
+        message: 'Teleoperation stopped and the robot was returned to FSM mode 811.',
       })
     } catch (requestError) {
       setError(requestError.message)
@@ -100,7 +117,13 @@ export function TeleoperationPanel() {
           <h2>Hand and arm control</h2>
         </div>
         <span className={`status-pill ${status.running ? 'live' : ''}`}>
-          <i /> {status.running ? `Running · PID ${status.pid}` : 'Stopped'}
+          <i /> {status.stopping
+            ? 'Stopping · FSM 811 requested'
+            : status.tracking
+              ? `Tracking · PID ${status.pid}`
+              : status.running
+                ? `Ready · PID ${status.pid}`
+                : 'Stopped'}
         </span>
       </div>
 
@@ -147,9 +170,14 @@ export function TeleoperationPanel() {
           <span>Pass-through · Images off · Motion on</span>
         </div>
         {status.running ? (
-          <button className="button danger" disabled={busy} onClick={stop}>Stop teleoperation</button>
+          <div className="teleoperation-actions">
+            {!status.tracking && !status.stopping && (
+              <button className="button primary" disabled={busy} onClick={beginTracking}>Start robot tracking</button>
+            )}
+            <button className="button danger" disabled={busy || status.stopping} onClick={stop}>Stop teleoperation</button>
+          </div>
         ) : (
-          <button className="button primary" disabled={busy} onClick={start}>Start teleoperation</button>
+          <button className="button primary" disabled={busy} onClick={start}>Launch teleoperation</button>
         )}
       </div>
 

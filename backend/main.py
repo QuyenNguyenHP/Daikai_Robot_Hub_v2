@@ -133,6 +133,7 @@ class ControlRequest(BaseModel):
         "stand_to_lie",
         "crankshaft_start",
         "crankshaft_stop",
+        "teleoperation_stop",
     ]
     arm: Literal["left", "right", "both"] = "right"
     speed_deg_s: float = Field(default=120.0, ge=100.0, le=150.0)
@@ -220,13 +221,35 @@ def start_teleoperation(
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
-@app.post("/api/robot/teleoperation/stop")
-def stop_teleoperation(request: Request) -> dict[str, object]:
+@app.post("/api/robot/teleoperation/tracking/start")
+def begin_teleoperation_tracking(request: Request) -> dict[str, object]:
     try:
-        return robot_teleoperation(request).stop()
+        return robot_teleoperation(request).begin_tracking()
     except TeleoperationStateError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except TeleoperationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/robot/teleoperation/stop")
+def stop_teleoperation(request: Request) -> dict[str, object]:
+    try:
+        result = robot_teleoperation(request).stop()
+        control = robot_control(request)
+        if not control.network_interface:
+            # Teleoperation is fixed to eth10, so use the same interface for
+            # the immediate post-teleop FSM transition when the backend was
+            # launched without UNITREE_NETWORK_INTERFACE.
+            control = RobotControlService(network_interface="eth10")
+        mode = control.execute("teleoperation_stop")
+        return {**result, "robot_mode": mode.get("last_fsm_id")}
+    except TeleoperationStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except TeleoperationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RobotControlBusyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RobotControlError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 

@@ -185,6 +185,8 @@ main { max-width: 1440px; margin: 0 auto; padding: 48px clamp(18px, 4vw, 64px) 7
 .teleoperation-controls { display: grid; grid-template-columns: minmax(180px, .6fr) minmax(240px, 1fr) auto; align-items: end; gap: 14px; }
 .teleoperation-controls label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
 .teleoperation-controls select { height: 42px; padding: 0 12px; border-radius: 9px; color: #dce6f2; background: #091522; border: 1px solid var(--panel-border); }
+.teleoperation-actions { display: flex; gap: 8px; }
+.teleoperation-actions .button { white-space: nowrap; }
 .teleoperation-config { min-height: 42px; display: grid; align-content: center; gap: 3px; color: var(--muted); font-size: 10px; }
 .teleoperation-output { max-height: 300px; margin: 20px 0 0; padding: 14px; overflow: auto; border-radius: 10px; color: #b8c8d9; background: #03080f; border: 1px solid var(--panel-border); font: 10px/1.5 monospace; white-space: pre-wrap; }
 .teleoperation-panel > .error-message { margin: 14px 0 0; }
@@ -317,6 +319,7 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
   .stereo-page-heading { align-items: flex-start; flex-direction: column; }
   .stereo-class-editor { grid-template-columns: 1fr; align-items: stretch; }
   .teleoperation-controls { grid-template-columns: 1fr; align-items: stretch; }
+  .teleoperation-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .quest-access-card { grid-template-columns: 1fr auto; }
   .quest-access-card > div { grid-column: 1 / -1; }
 }
@@ -352,6 +355,7 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
   .quest-access-card { grid-template-columns: 1fr; }
   .quest-access-card > div { grid-column: auto; }
   .quest-access-card code { white-space: normal; overflow-wrap: anywhere; }
+  .teleoperation-actions { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -303,6 +303,14 @@ class RobotControlService:
                 self._require_success(code, "enable locomotion")
                 self._set_fsm_state(locomotion_fsm_id)
 
+            elif action == "teleoperation_stop":
+                # XR arm control enters FSM 816. Restore the R1's normal
+                # locomotion state immediately when the web UI stops teleop.
+                client.SetVelocity(0.0, 0.0, 0.0, COMMAND_DURATION)
+                code = client.SetFsmId(LOCOMOTION_FSM_ID)
+                self._require_success(code, "restore locomotion after teleoperation")
+                self._set_fsm_state(LOCOMOTION_FSM_ID)
+
             elif action == "disable":
                 code = client.SetVelocity(0.0, 0.0, 0.0, COMMAND_DURATION)
                 self._require_success(code, "disable control")

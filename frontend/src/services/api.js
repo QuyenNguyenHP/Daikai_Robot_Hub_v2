@@ -45,6 +45,10 @@ export function startTeleoperation(inputMode) {
   })
 }
 
+export function startTeleoperationTracking() {
+  return request('/api/robot/teleoperation/tracking/start', { method: 'POST' })
+}
+
 export function stopTeleoperation() {
   return request('/api/robot/teleoperation/stop', { method: 'POST' })
 }
