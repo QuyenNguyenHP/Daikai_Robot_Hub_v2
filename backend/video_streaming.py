@@ -1,4 +1,4 @@
-"""Manage the GStreamer UDP/RTP video relay used by the Console page."""
+"""Expose the robot's RTP/H.264 feed as browser-compatible MJPEG."""
 
 from __future__ import annotations
 
@@ -8,24 +8,25 @@ import signal
 import subprocess
 import threading
 from collections import deque
+from collections.abc import Iterator
 
 
 class VideoStreamingError(RuntimeError):
-    """Raised when the GStreamer relay cannot be managed."""
+    """Raised when the GStreamer viewer cannot be managed."""
 
 
 class VideoStreamingStateError(VideoStreamingError):
-    """Raised when a relay request conflicts with its current state."""
+    """Raised when a viewer request conflicts with its current state."""
 
 
 class VideoStreamingService:
-    """Own one UDP video relay subprocess."""
+    """Own one RTP-to-MJPEG subprocess for the web console."""
 
     def __init__(self) -> None:
-        self._process: subprocess.Popen[str] | None = None
-        self._destination_ip: str | None = None
+        self._process: subprocess.Popen[bytes] | None = None
         self._output: deque[str] = deque(maxlen=40)
         self._lock = threading.Lock()
+        self._stream_connected = False
 
     def _is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
@@ -36,76 +37,78 @@ class VideoStreamingService:
             return {
                 "running": running,
                 "pid": self._process.pid if running and self._process else None,
-                "destination_ip": self._destination_ip,
-                "source_port": 5001,
-                "destination_port": 5000,
-                "exit_code": (
-                    None if self._process is None or running else self._process.returncode
-                ),
+                "source_port": 5003,
+                "viewer_connected": self._stream_connected if running else False,
+                "exit_code": None if self._process is None or running else self._process.returncode,
                 "output": list(self._output),
             }
 
-    def _read_output(self, process: subprocess.Popen[str]) -> None:
-        if process.stdout is None:
+    def _read_output(self, process: subprocess.Popen[bytes]) -> None:
+        if process.stderr is None:
             return
-        for line in process.stdout:
+        for line in process.stderr:
             with self._lock:
-                self._output.append(line.rstrip())
+                self._output.append(line.decode(errors="replace").rstrip())
 
-    def start(self, destination_ip: str) -> dict[str, object]:
+    def start(self) -> dict[str, object]:
         with self._lock:
             if self._is_running():
-                raise VideoStreamingStateError("Video streaming is already running.")
+                raise VideoStreamingStateError("Video viewer is already running.")
             executable = shutil.which("gst-launch-1.0")
             if executable is None:
                 raise VideoStreamingError(
                     "gst-launch-1.0 was not found. Install GStreamer on the backend host."
                 )
             command = [
-                executable,
-                "-v",
-                "udpsrc",
-                "address=0.0.0.0",
-                "port=5001",
+                executable, "-q", "udpsrc", "address=0.0.0.0", "port=5003",
                 "caps=application/x-rtp,media=video,encoding-name=H264,clock-rate=90000",
-                "!",
-                "queue",
-                "!",
-                "udpsink",
-                f"host={destination_ip}",
-                "port=5000",
-                "sync=false",
-                "async=false",
+                "!", "rtph264depay", "!", "h264parse", "!", "avdec_h264", "!",
+                "videoconvert", "!", "jpegenc", "quality=80", "!", "multipartmux",
+                "boundary=frame", "!", "fdsink", "fd=1", "sync=false",
             ]
             self._output.clear()
             try:
                 self._process = subprocess.Popen(
                     command,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
+                    stderr=subprocess.PIPE,
                     start_new_session=True,
                 )
             except OSError as exc:
-                raise VideoStreamingError(
-                    f"Could not start the GStreamer relay: {exc}"
-                ) from exc
-            self._destination_ip = destination_ip
+                raise VideoStreamingError(f"Could not start the GStreamer viewer: {exc}") from exc
+            self._stream_connected = False
             process = self._process
 
         threading.Thread(
-            target=self._read_output,
-            args=(process,),
-            name="video-stream-output",
-            daemon=True,
+            target=self._read_output, args=(process,), name="video-viewer-output", daemon=True
         ).start()
         return self.status()
+
+    def stream(self) -> Iterator[bytes]:
+        with self._lock:
+            if not self._is_running() or self._process is None:
+                raise VideoStreamingStateError("Start the video viewer first.")
+            if self._stream_connected:
+                raise VideoStreamingStateError("The video viewer is already open.")
+            process = self._process
+            self._stream_connected = True
+
+        try:
+            if process.stdout is None:
+                raise VideoStreamingError("The video viewer has no media output.")
+            while process.poll() is None:
+                chunk = process.stdout.read1(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            with self._lock:
+                self._stream_connected = False
 
     def stop(self) -> dict[str, object]:
         with self._lock:
             if not self._is_running() or self._process is None:
-                raise VideoStreamingStateError("Video streaming is not running.")
+                raise VideoStreamingStateError("Video viewer is not running.")
             process = self._process
         try:
             os.killpg(process.pid, signal.SIGTERM)

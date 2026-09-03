@@ -13,7 +13,8 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, IPvAnyAddress
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from backend.robot_battery import RobotBatteryService
 from backend.robot_control import (
@@ -123,10 +124,6 @@ class LedRequest(BaseModel):
     keep_on: bool = False
 
 
-class VolumeRequest(BaseModel):
-    volume: int = Field(ge=0, le=100)
-
-
 class ControlRequest(BaseModel):
     action: Literal[
         "stance",
@@ -158,10 +155,6 @@ class ServiceSwitchRequest(BaseModel):
 
 class TeleoperationStartRequest(BaseModel):
     input_mode: Literal["hand", "controller"] = "controller"
-
-
-class VideoStreamingStartRequest(BaseModel):
-    destination_ip: IPvAnyAddress
 
 
 @app.get("/api/health")
@@ -202,9 +195,7 @@ def video_stream_status(request: Request) -> dict[str, object]:
 
 
 @app.post("/api/video-stream/start")
-def start_video_stream(
-    request: Request, payload: VideoStreamingStartRequest
-) -> dict[str, object]:
+def start_video_stream(request: Request) -> dict[str, object]:
     try:
         services = robot_services(request).list().get("services", [])
         stereo_service = next(
@@ -219,7 +210,7 @@ def start_video_stream(
             raise VideoStreamingStateError(
                 "Turn on robot service 'stereo_patch_pc1' before streaming."
             )
-        return video_streaming(request).start(str(payload.destination_ip))
+        return video_streaming(request).start()
     except RobotServiceBusyError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except RobotServiceError as error:
@@ -228,6 +219,27 @@ def start_video_stream(
         raise HTTPException(status_code=409, detail=str(error)) from error
     except VideoStreamingError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/video-stream/feed")
+def video_stream_feed(request: Request) -> StreamingResponse:
+    try:
+        stream = video_streaming(request).stream()
+        first_chunk = next(stream)
+    except VideoStreamingStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except VideoStreamingError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    def content():
+        yield first_chunk
+        yield from stream
+
+    return StreamingResponse(
+        content(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/video-stream/stop")
@@ -375,16 +387,6 @@ def robot_speech_status(request: Request) -> dict[str, object]:
 def speak_on_robot(request: Request, payload: SpeechRequest) -> dict[str, object]:
     try:
         return robot_audio(request).speak(payload.text)
-    except RobotAudioBusyError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except RobotAudioError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
-
-
-@app.post("/api/robot/volume")
-def set_robot_volume(request: Request, payload: VolumeRequest) -> dict[str, object]:
-    try:
-        return robot_audio(request).set_volume(payload.volume)
     except RobotAudioBusyError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except RobotAudioError as error:

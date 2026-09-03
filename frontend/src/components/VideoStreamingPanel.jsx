@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getRobotServices,
+  getVideoStreamFeedUrl,
   getVideoStreamStatus,
   startVideoStream,
   stopVideoStream,
@@ -8,12 +9,12 @@ import {
 
 
 export function VideoStreamingPanel() {
-  const [destinationIp, setDestinationIp] = useState('')
   const [status, setStatus] = useState({ running: false, output: [] })
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState(null)
   const [stereoService, setStereoService] = useState(null)
   const [serviceError, setServiceError] = useState('')
+  const [feedKey, setFeedKey] = useState(0)
   const mounted = useRef(true)
 
   const refresh = useCallback(async () => {
@@ -57,17 +58,13 @@ export function VideoStreamingPanel() {
     }
   }, [])
 
-  const submit = async (event) => {
-    event.preventDefault()
+  const start = async () => {
     setBusy(true)
     setMessage(null)
     try {
-      const result = await startVideoStream(destinationIp.trim())
-      setStatus(result)
-      setMessage({
-        type: 'success',
-        text: `Relaying RTP/H.264 video to ${result.destination_ip}:5000.`,
-      })
+      setStatus(await startVideoStream())
+      setFeedKey((key) => key + 1)
+      setMessage({ type: 'success', text: 'Live robot video started.' })
     } catch (error) {
       setMessage({ type: 'error', text: error.message })
     } finally {
@@ -80,7 +77,7 @@ export function VideoStreamingPanel() {
     setMessage(null)
     try {
       setStatus(await stopVideoStream())
-      setMessage({ type: 'success', text: 'Video relay stopped.' })
+      setMessage({ type: 'success', text: 'Live robot video stopped.' })
     } catch (error) {
       setMessage({ type: 'error', text: error.message })
     } finally {
@@ -94,17 +91,16 @@ export function VideoStreamingPanel() {
     <section className="panel video-stream-panel">
       <div className="panel-heading video-stream-heading">
         <div>
-          <p className="eyebrow">VIDEO RELAY</p>
-          <h2>Stream to another device</h2>
+          <p className="eyebrow">LIVE VIDEO</p>
+          <h2>Robot camera</h2>
         </div>
         <span className={`status-pill ${status.running ? 'live' : ''}`}>
-          <i /> {status.running ? 'Streaming' : 'Stopped'}
+          <i /> {status.running ? 'Live' : 'Stopped'}
         </span>
       </div>
 
       <p className="video-stream-description">
-        Receives RTP/H.264 on UDP port 5001 and forwards it to UDP port 5000
-        on the destination PC or laptop.
+        View the robot&apos;s RTP/H.264 camera feed directly in this dashboard.
       </p>
 
       <div className={`video-stream-prerequisite ${serviceReady ? 'ready' : ''}`}>
@@ -113,35 +109,40 @@ export function VideoStreamingPanel() {
       </div>
       {serviceError && <p className="mode-detail video-stream-service-error">{serviceError}</p>}
 
-      <form className="video-stream-form" onSubmit={submit}>
-        <label>
-          <span>Destination device IP</span>
-          <input
-            className="text-input"
-            type="text"
-            inputMode="decimal"
-            placeholder="192.168.0.52"
-            value={status.running ? status.destination_ip || '' : destinationIp}
-            disabled={status.running || busy}
-            required
-            onChange={(event) => setDestinationIp(event.target.value)}
+      <div className={`video-viewer ${status.running ? 'active' : ''}`}>
+        {status.running ? (
+          <img
+            key={feedKey}
+            src={`${getVideoStreamFeedUrl()}?session=${feedKey}`}
+            alt="Live view from the robot camera"
+            onError={() => setMessage({ type: 'error', text: 'The live video feed could not be displayed.' })}
           />
-        </label>
+        ) : (
+          <div className="video-viewer-placeholder">
+            <span aria-hidden="true">▶</span>
+            <strong>Camera preview is off</strong>
+            <small>Start live view to show the robot video here.</small>
+          </div>
+        )}
+      </div>
+
+      <div className="video-stream-actions">
         {status.running ? (
           <button type="button" className="button danger" disabled={busy} onClick={stop}>
-            {busy ? 'Stopping…' : 'Stop streaming'}
+            {busy ? 'Stopping…' : 'Stop live view'}
           </button>
         ) : (
           <button
-            type="submit"
+            type="button"
             className="button primary"
-            disabled={busy || !destinationIp.trim() || !serviceReady}
-            title={serviceReady ? 'Start streaming' : 'Turn on stereo_patch_pc1 in System Services first'}
+            disabled={busy || !serviceReady}
+            title={serviceReady ? 'Start live view' : 'Turn on stereo_patch_pc1 in System Services first'}
+            onClick={start}
           >
-            {busy ? 'Starting…' : 'Start streaming'}
+            {busy ? 'Starting…' : 'Start live view'}
           </button>
         )}
-      </form>
+      </div>
 
       {message && <p className={`${message.type}-message`}>{message.text}</p>}
       {status.output?.length > 0 && (

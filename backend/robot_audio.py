@@ -9,6 +9,7 @@ from backend.unitree_dds import UNITREE_DDS_INIT_LOCK
 
 
 MAX_TEXT_LENGTH = 200
+SPEECH_VOLUME = 100
 
 
 class RobotAudioError(RuntimeError):
@@ -27,7 +28,6 @@ class RobotAudioService:
         self._lock = threading.Lock()
         self._client = None
         self._speaker_id = self._read_speaker_id()
-        self._volume: int | None = None
         self._led_rgb: tuple[int, int, int] | None = None
         self._led_state_lock = threading.Lock()
         self._led_keep_on = False
@@ -54,7 +54,7 @@ class RobotAudioService:
             "busy": self._lock.locked(),
             "tts_backend": "unitree_tts_maker",
             "speaker_id": self._speaker_id,
-            "volume": self._volume,
+            "volume": SPEECH_VOLUME,
             "led_rgb": list(self._led_rgb) if self._led_rgb is not None else None,
             "led_keep_on": self._led_keep_on,
             "led_keepalive_seconds": self._led_keepalive_seconds,
@@ -165,27 +165,11 @@ class RobotAudioService:
         finally:
             self._lock.release()
 
-    def set_volume(self, volume: int) -> dict[str, object]:
-        if isinstance(volume, bool) or not 0 <= volume <= 100:
-            raise RobotAudioError("Robot volume must be an integer from 0 to 100.")
-        if not self.network_interface:
-            raise RobotAudioError("UNITREE_NETWORK_INTERFACE is not configured.")
-        if not self._lock.acquire(blocking=False):
-            raise RobotAudioBusyError("The robot audio service is busy.")
-        try:
-            code = self._audio_client().SetVolume(volume)
-            if code != 0:
-                raise RobotAudioError(f"SetVolume failed with code {code}.")
-            self._volume = volume
-            return {"updated": True, "volume": volume}
-        except RobotAudioError:
-            raise
-        except Exception as exc:
-            raise RobotAudioError(f"Could not set the robot volume: {exc}") from exc
-        finally:
-            self._lock.release()
-
-    def speak(self, text: str, speaker_id: int | None = None) -> dict[str, object]:
+    def speak(
+        self,
+        text: str,
+        speaker_id: int | None = None,
+    ) -> dict[str, object]:
         normalized = self._validate(text)
         selected_speaker_id = self._speaker_id if speaker_id is None else speaker_id
         if isinstance(selected_speaker_id, bool) or not 0 <= selected_speaker_id <= 4:
@@ -193,13 +177,18 @@ class RobotAudioService:
         if not self._lock.acquire(blocking=False):
             raise RobotAudioBusyError("The robot is already speaking.")
         try:
-            code = self._audio_client().TtsMaker(normalized, selected_speaker_id)
+            client = self._audio_client()
+            code = client.SetVolume(SPEECH_VOLUME)
+            if code != 0:
+                raise RobotAudioError(f"SetVolume failed with code {code}.")
+            code = client.TtsMaker(normalized, selected_speaker_id)
             if code != 0:
                 raise RobotAudioError(f"TtsMaker failed with code {code}.")
             return {
                 "spoken": True,
                 "text": normalized,
                 "speaker_id": selected_speaker_id,
+                "volume": SPEECH_VOLUME,
             }
         except RobotAudioError:
             raise

@@ -27,12 +27,14 @@ export const getRobotControlStatus = () => request('/api/robot/control/status')
 
 export const getVideoStreamStatus = () => request('/api/video-stream/status')
 
-export function startVideoStream(destinationIp) {
+export function startVideoStream() {
   return request('/api/video-stream/start', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ destination_ip: destinationIp }),
   })
+}
+
+export function getVideoStreamFeedUrl() {
+  return `${API_URL}/api/video-stream/feed`
 }
 
 export function stopVideoStream() {
@@ -88,14 +90,6 @@ export function speakOnRobot(text) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
-  })
-}
-
-export function setRobotVolume(volume) {
-  return request('/api/robot/volume', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ volume }),
   })
 }
 

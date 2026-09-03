@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import RobotVolumeControl from './RobotVolumeControl'
 
 
 export function RobotSpeechPanel({
@@ -7,10 +6,6 @@ export function RobotSpeechPanel({
   message,
   lastSpoken,
   onSpeak,
-  volume,
-  volumeBusy,
-  onVolumeChange,
-  onVolumeApply,
 }) {
   const [text, setText] = useState('')
 
@@ -27,13 +22,6 @@ export function RobotSpeechPanel({
           <p className="eyebrow">ROBOT VOICE</p>
           <h2>Make the robot speak</h2>
         </div>
-        <RobotVolumeControl
-          value={volume}
-          busy={busy || volumeBusy}
-          disabled={busy}
-          onChange={onVolumeChange}
-          onApply={onVolumeApply}
-        />
       </div>
 
       <form className="speech-form" onSubmit={submit}>
