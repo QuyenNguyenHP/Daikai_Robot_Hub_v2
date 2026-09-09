@@ -385,3 +385,52 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
 @media (prefers-reduced-motion: reduce) {
   .model-loading-spinner { animation-duration: 1.8s; }
 }
+
+.object-distance-page { display: grid; gap: 20px; }
+.model-loading-overlay { position: fixed; inset: 76px 0 0; z-index: 40; display: grid; place-items: center; padding: 20px; background: rgba(3, 9, 16, .72); backdrop-filter: blur(5px); }
+.model-loading-content { min-width: min(340px, 90vw); display: grid; justify-items: center; gap: 9px; padding: 28px; border-radius: 18px; color: #e7edf7; background: linear-gradient(145deg, rgba(18, 34, 53, .98), rgba(9, 20, 34, .98)); border: 1px solid var(--panel-border); box-shadow: 0 25px 70px rgba(0, 0, 0, .45); }
+.model-loading-content strong { margin-top: 7px; font: 600 16px Manrope, sans-serif; }
+.model-loading-content > span:last-child { color: var(--muted); font-size: 11px; }
+.model-loading-spinner { width: 48px; height: 48px; border: 4px solid rgba(85, 168, 223, .18); border-top-color: var(--cyan); border-radius: 50%; box-shadow: 0 0 18px rgba(85, 168, 223, .12); animation: model-loading-spin .8s linear infinite; }
+@keyframes model-loading-spin { to { transform: rotate(360deg); } }
+.stereo-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.stereo-page-heading h1 { margin: 6px 0 8px; font: 600 clamp(24px, 3vw, 34px) Manrope, sans-serif; letter-spacing: -.03em; }
+.stereo-page-heading > div > p:last-child { max-width: 730px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.stereo-page-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.stereo-page-error { margin: 0; }
+.stereo-class-editor { display: grid; grid-template-columns: minmax(220px, .45fr) minmax(0, 1.55fr); align-items: end; gap: 24px; padding: 18px 20px; }
+.stereo-class-editor h2 { margin: 4px 0 3px; font: 600 17px Manrope, sans-serif; }
+.stereo-class-editor > div > p:last-child { margin: 0; color: var(--muted); font-size: 10px; }
+.stereo-class-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.stereo-monitor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.stereo-monitor-panel { min-width: 0; padding: 18px; }
+.stereo-monitor-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.stereo-monitor-heading h2 { margin: 4px 0 0; font: 600 17px Manrope, sans-serif; }
+.stereo-monitor { position: relative; aspect-ratio: 544 / 448; overflow: hidden; border-radius: 13px; background: #03080f; border: 1px solid rgba(132, 159, 190, .13); }
+.stereo-monitor > img { width: 100%; height: 100%; display: block; object-fit: contain; }
+.stereo-details-grid { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 20px; align-items: start; }
+.stereo-metrics-panel, .stereo-detections-panel { padding: 20px; }
+.stereo-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.stereo-metrics > div { min-width: 0; padding: 14px 10px; border-radius: 10px; text-align: center; background: rgba(6, 15, 26, .55); border: 1px solid var(--panel-border); }
+.stereo-metrics strong { display: block; overflow: hidden; color: var(--cyan); font: 600 20px Manrope, sans-serif; text-overflow: ellipsis; }
+.stereo-metrics span { color: var(--muted); font-size: 9px; }
+.stereo-config-detail { margin: 14px 0 0; color: var(--muted); font-size: 10px; }
+.stereo-detections-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.stereo-detections-heading h2 { margin: 4px 0 0; font: 600 17px Manrope, sans-serif; }
+.stereo-detections-heading > strong { color: var(--cyan); font: 600 25px Manrope, sans-serif; }
+.stereo-detection-list { display: grid; gap: 7px; max-height: 210px; overflow-y: auto; }
+.stereo-detection-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; background: rgba(6, 15, 26, .45); border: 1px solid var(--panel-border); }
+.stereo-detection-row > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: #031015; background: var(--cyan); font-weight: 700; }
+.stereo-detection-row strong, .stereo-detection-row small { display: block; }
+.stereo-detection-row strong { color: #dce6f2; font-size: 12px; }
+.stereo-detection-row small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.stereo-detection-row b { color: #7cebd1; font: 600 12px Manrope, sans-serif; }
+.stereo-safety-note { margin: 0; color: #9baabc; font-size: 10px; line-height: 1.5; text-align: center; }
+@media (max-width: 900px) {
+ .stereo-monitor-grid, .stereo-details-grid, .stereo-class-editor { grid-template-columns: 1fr; }
+ .stereo-page-heading { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 600px) {
+ .stereo-class-controls { grid-template-columns: 1fr; }
+ .stereo-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

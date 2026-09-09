@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -47,6 +48,11 @@ from backend.video_streaming import (
 )
 
 
+from backend.robot_stereo_detection import (
+    RobotStereoDetectionService, RobotStereoError, RobotStereoStateError,
+)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.robot_battery = RobotBatteryService()
@@ -54,7 +60,9 @@ async def lifespan(app: FastAPI):
     app.state.robot_audio = RobotAudioService()
     app.state.robot_services = RobotServiceManager()
     app.state.robot_teleoperation = RobotTeleoperationService()
+    app.state.camera_start_lock = threading.Lock()
     app.state.video_streaming = VideoStreamingService()
+    app.state.robot_stereo_detection = RobotStereoDetectionService()
     app.state.robot_battery.start()
     try:
         yield
@@ -64,6 +72,7 @@ async def lifespan(app: FastAPI):
         app.state.robot_audio.stop()
         app.state.robot_teleoperation.shutdown()
         app.state.video_streaming.shutdown()
+        app.state.robot_stereo_detection.stop()
 
 
 app = FastAPI(
@@ -210,7 +219,10 @@ def start_video_stream(request: Request) -> dict[str, object]:
             raise VideoStreamingStateError(
                 "Turn on robot service 'stereo_patch_pc1' before streaming."
             )
-        return video_streaming(request).start()
+        with request.app.state.camera_start_lock:
+            if robot_stereo_detection(request).status()["running"]:
+                raise VideoStreamingStateError("Stop object distance detection before starting the video viewer.")
+            return video_streaming(request).start()
     except RobotServiceBusyError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except RobotServiceError as error:
@@ -406,3 +418,82 @@ def set_robot_led(request: Request, payload: LedRequest) -> dict[str, object]:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except RobotAudioError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+def robot_stereo_detection(request: Request) -> RobotStereoDetectionService:
+    return request.app.state.robot_stereo_detection
+
+
+class StereoClassesRequest(BaseModel):
+    classes: list[str] = Field(min_length=1, max_length=30)
+
+
+@app.get("/api/robot/stereo/status")
+def robot_stereo_status(request: Request) -> dict[str, object]:
+    return robot_stereo_detection(request).status()
+
+
+@app.websocket("/api/robot/stereo/ws")
+async def robot_stereo_status_websocket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    detector: RobotStereoDetectionService = websocket.app.state.robot_stereo_detection
+    try:
+        while True:
+            await websocket.send_json(detector.status())
+            await asyncio.sleep(0.5)
+    except (WebSocketDisconnect, RuntimeError):
+        # RuntimeError is raised when the ASGI server has already closed the
+        # connection before the next status update is sent.
+        return
+
+
+@app.post("/api/robot/stereo/start")
+def start_robot_stereo(request: Request) -> dict[str, object]:
+    detector = robot_stereo_detection(request)
+    try:
+        with request.app.state.camera_start_lock:
+            if video_streaming(request).status()["running"]:
+                raise HTTPException(status_code=409, detail="Stop the video viewer before starting object distance detection.")
+            detector.start()
+    except RobotStereoError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return detector.status()
+
+
+@app.post("/api/robot/stereo/stop")
+def stop_robot_stereo(request: Request) -> dict[str, object]:
+    detector = robot_stereo_detection(request)
+    detector.stop()
+    return detector.status()
+
+
+@app.post("/api/robot/stereo/classes")
+def set_robot_stereo_classes(
+    request: Request,
+    payload: StereoClassesRequest,
+) -> dict[str, object]:
+    try:
+        return robot_stereo_detection(request).set_classes(payload.classes)
+    except RobotStereoStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RobotStereoError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/robot/stereo/stream/{view}")
+def robot_stereo_stream(
+    request: Request,
+    view: Literal["detection", "depth"],
+) -> StreamingResponse:
+    detector = robot_stereo_detection(request)
+    return StreamingResponse(
+        detector.mjpeg_stream(view),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+

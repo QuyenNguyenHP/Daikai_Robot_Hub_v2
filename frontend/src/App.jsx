@@ -3,6 +3,7 @@ import { AppHeader } from './components/AppHeader'
 import { FirstPage } from './pages/FirstPage'
 import { SystemServicesPage } from './pages/SystemServicesPage'
 import { TeleoperationPage } from './pages/TeleoperationPage'
+import { ObjectDistancePage } from './pages/ObjectDistancePage'
 import { getHealth } from './services/api'
 
 
@@ -37,6 +38,7 @@ export default function App() {
         )}
         {page === 'console' && <FirstPage />}
         {page === 'teleoperation' && <TeleoperationPage />}
+        {page === 'object-distance' && <ObjectDistancePage />}
         {page === 'services' && <SystemServicesPage />}
       </main>
       <footer>DAIKAI ROBOT HUB</footer>

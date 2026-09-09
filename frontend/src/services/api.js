@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '')
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, options)
@@ -100,3 +100,31 @@ export function setRobotLed(red, green, blue, keepOn = false) {
     body: JSON.stringify({ red, green, blue, keep_on: keepOn }),
   })
 }
+
+export const getRobotStereoStatus = () => request('/api/robot/stereo/status')
+
+export function getRobotStereoWebSocketUrl() {
+  const url = new URL('/api/robot/stereo/ws', API_URL)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
+export const startRobotStereo = () => (
+  request('/api/robot/stereo/start', { method: 'POST' })
+)
+
+export const stopRobotStereo = () => (
+  request('/api/robot/stereo/stop', { method: 'POST' })
+)
+
+export function setRobotStereoClasses(classes) {
+  return request('/api/robot/stereo/classes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ classes }),
+  })
+}
+
+export const getRobotStereoStreamUrl = (view, version = 0) => (
+  `${API_URL}/api/robot/stereo/stream/${view}?stream_version=${version}`
+)

@@ -1,0 +1,6 @@
+# Local Python bytecode
+__pycache__/
+*.py[cod]
+
+# Cached text encoder weights; keep locally for YOLO-World prompts.
+backend/r1_yolo_world_stereo/weights/
