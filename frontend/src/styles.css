@@ -283,6 +283,20 @@ input[type='range'] { width: 100%; accent-color: var(--cyan); margin: 14px 0 2px
 .auto-speech-toggle.active { color: #031015; background: var(--cyan); border-color: var(--cyan); }
 .speech-details { display: flex; justify-content: space-between; gap: 20px; margin-top: 12px; color: var(--muted); font-size: 11px; }
 .speech-details strong { color: #d4deeb; font-weight: 500; }
+.voice-heading { margin-bottom: 14px; }
+.voice-conversation { min-height: 170px; max-height: 300px; display: grid; align-content: start; gap: 9px; padding: 12px; overflow-y: auto; border: 1px solid var(--panel-border); border-radius: 12px; background: rgba(3, 10, 18, .45); }
+.voice-empty { min-height: 144px; display: grid; place-content: center; justify-items: center; gap: 5px; color: var(--muted); text-align: center; }
+.voice-empty strong { color: #dce6f2; font-size: 13px; }
+.voice-empty span { font-size: 10px; }
+.voice-message { width: min(88%, 470px); padding: 9px 11px; border-radius: 11px; background: rgba(104, 127, 158, .1); border: 1px solid var(--panel-border); }
+.voice-message.user { justify-self: end; background: rgba(85, 168, 223, .12); border-color: rgba(85, 168, 223, .24); }
+.voice-message small { color: var(--cyan); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; }
+.voice-message p { margin: 3px 0 0; color: #dce6f2; font-size: 12px; line-height: 1.45; }
+.voice-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.voice-actions > span { color: var(--muted); font-size: 10px; }
+.voice-recording i { width: 8px; height: 8px; display: inline-block; margin-right: 7px; border-radius: 50%; background: var(--danger); animation: voice-pulse 1s ease-in-out infinite; }
+.speech-panel > .error-message, .speech-panel > .success-message { margin: 12px 0 0; }
+@keyframes voice-pulse { 50% { opacity: .35; } }
 .led-panel { padding: 22px; }
 .led-heading { margin-bottom: 16px; }
 .led-current-indicator { width: 66px; height: 56px; display: grid; place-items: center; flex: 0 0 auto; }

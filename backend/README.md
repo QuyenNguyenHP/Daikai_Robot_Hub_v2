@@ -186,6 +186,21 @@ Robot volume is controlled from `0` to `100` with `AudioClient.SetVolume()`.
 Speech is limited to `200` characters per request, and only one speech request
 can run at a time.
 
+The Voice AI panel records the browser microphone and sends it through this
+backend to the external `voice_ai_server`. Configure the backend before start:
+
+```bash
+export VOICE_AI_SERVER_URL=http://VOICE_AI_PC_IP:8000
+export VOICE_AI_API_KEY=your-key-if-configured
+export VOICE_AI_TIMEOUT_SECONDS=180
+```
+
+The backend requests JSON mode from `/v1/voice/chat`, converts the returned
+24 kHz WAV to 16 kHz mono PCM, and sends it to the R1 speaker with
+`AudioClient.PlayStream()`. The API key remains on the backend. Browser
+microphone recording requires HTTPS when the frontend is opened from another
+computer; browsers allow plain HTTP microphone access only on localhost.
+
 ### `robot_services.py`
 
 Lists the services advertised by the Unitree robot-state API and switches

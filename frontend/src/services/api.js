@@ -93,6 +93,19 @@ export function speakOnRobot(text) {
   })
 }
 
+export const getRobotVoiceChatStatus = () => request('/api/robot/voice-chat/status')
+
+export function sendRobotVoiceMessage(audio, sessionId) {
+  return request('/api/robot/voice-chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': audio.type || 'application/octet-stream',
+      'X-Voice-Session': sessionId,
+    },
+    body: audio,
+  })
+}
+
 export function setRobotLed(red, green, blue, keepOn = false) {
   return request('/api/robot/led', {
     method: 'POST',

@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import os
+import audioop
+import io
 import threading
+import time
+import wave
 
 from backend.unitree_dds import UNITREE_DDS_INIT_LOCK
 
 
 MAX_TEXT_LENGTH = 200
 SPEECH_VOLUME = 100
+STREAM_NAME = "daikai_voice_ai"
+STREAM_SAMPLE_RATE = 16_000
+STREAM_CHANNELS = 1
+STREAM_SAMPLE_WIDTH = 2
+STREAM_CHUNK_BYTES = STREAM_SAMPLE_RATE * STREAM_SAMPLE_WIDTH
 
 
 class RobotAudioError(RuntimeError):
@@ -194,5 +203,71 @@ class RobotAudioService:
             raise
         except Exception as exc:
             raise RobotAudioError(f"Robot TTS request failed: {exc}") from exc
+        finally:
+            self._lock.release()
+
+    @staticmethod
+    def _wav_to_robot_pcm(wav_data: bytes) -> tuple[bytes, float]:
+        try:
+            with wave.open(io.BytesIO(wav_data), "rb") as wav_file:
+                channels = wav_file.getnchannels()
+                sample_width = wav_file.getsampwidth()
+                sample_rate = wav_file.getframerate()
+                if wav_file.getcomptype() != "NONE" or sample_width != 2:
+                    raise RobotAudioError(
+                        "Voice AI audio must be uncompressed 16-bit PCM WAV."
+                    )
+                if channels not in {1, 2}:
+                    raise RobotAudioError("Voice AI WAV must be mono or stereo.")
+                pcm = wav_file.readframes(wav_file.getnframes())
+        except (EOFError, wave.Error) as exc:
+            raise RobotAudioError(f"Voice AI returned an invalid WAV file: {exc}") from exc
+
+        if channels == 2:
+            pcm = audioop.tomono(pcm, sample_width, 0.5, 0.5)
+        if sample_rate != STREAM_SAMPLE_RATE:
+            pcm, _ = audioop.ratecv(
+                pcm, sample_width, STREAM_CHANNELS, sample_rate, STREAM_SAMPLE_RATE, None
+            )
+        duration = len(pcm) / (
+            STREAM_SAMPLE_RATE * STREAM_CHANNELS * STREAM_SAMPLE_WIDTH
+        )
+        return pcm, duration
+
+    def play_wav(self, wav_data: bytes) -> dict[str, object]:
+        pcm, duration = self._wav_to_robot_pcm(wav_data)
+        if not self.network_interface:
+            raise RobotAudioError("UNITREE_NETWORK_INTERFACE is not configured.")
+        if not self._lock.acquire(blocking=False):
+            raise RobotAudioBusyError("The robot is already speaking.")
+        try:
+            client = self._audio_client()
+            code = client.SetVolume(SPEECH_VOLUME)
+            if code != 0:
+                raise RobotAudioError(f"SetVolume failed with code {code}.")
+            stream_id = str(int(time.time() * 1000))
+            try:
+                for index, offset in enumerate(
+                    range(0, len(pcm), STREAM_CHUNK_BYTES)
+                ):
+                    chunk = pcm[offset : offset + STREAM_CHUNK_BYTES]
+                    result = client.PlayStream(STREAM_NAME, stream_id, chunk)
+                    code = result[0] if isinstance(result, tuple) else result
+                    if code != 0:
+                        raise RobotAudioError(
+                            f"PlayStream rejected audio chunk {index} with code {code}."
+                        )
+                    time.sleep(len(chunk) / (STREAM_SAMPLE_RATE * STREAM_SAMPLE_WIDTH))
+            finally:
+                client.PlayStop(STREAM_NAME)
+            return {
+                "played": True,
+                "duration_seconds": round(duration, 2),
+                "sample_rate": STREAM_SAMPLE_RATE,
+            }
+        except RobotAudioError:
+            raise
+        except Exception as exc:
+            raise RobotAudioError(f"Robot audio streaming failed: {exc}") from exc
         finally:
             self._lock.release()

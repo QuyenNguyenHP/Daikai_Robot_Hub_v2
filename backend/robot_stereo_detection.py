@@ -37,6 +37,34 @@ class RobotStereoStateError(RobotStereoError):
     """Raised when configuration changes require the pipeline to be stopped."""
 
 
+def _set_model_classes(model, prompts, source_dir, device) -> None:
+    """Set YOLO-World prompts across supported Ultralytics releases.
+
+    Newer releases provide ``ultralytics.nn.text_model`` and let us redirect
+    their CLIP cache. Ultralytics 8.3 uses OpenAI CLIP directly instead.
+    """
+    try:
+        from ultralytics.nn import text_model
+    except ImportError:
+        try:
+            import clip
+        except ImportError as exc:
+            raise RobotStereoError(
+                "YOLO-World needs the CLIP package for object prompts. Install it with: "
+                "python -m pip install 'git+https://github.com/openai/CLIP.git'"
+            ) from exc
+        clip_path = source_dir / "weights" / "clip" / "ViT-B-32.pt"
+        clip_model, _ = clip.load(
+            str(clip_path) if clip_path.is_file() else "ViT-B/32",
+            device=device,
+            download_root=str(clip_path.parent),
+        )
+        model.model.clip_model = clip_model
+    else:
+        text_model.WEIGHTS_DIR = source_dir / "weights"
+    model.set_classes(prompts)
+
+
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
     try:
         return max(minimum, int(os.getenv(name, str(default))))
@@ -274,12 +302,10 @@ class RobotStereoDetectionService:
             self._device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
             try:
                 from ultralytics import YOLOWorld
-                from ultralytics.nn import text_model as ultralytics_text_model
             except ImportError as exc:
                 raise RobotStereoError(
-                    "Ultralytics is not installed in the Python environment running "
-                    "the backend. Install it with: python3 -m pip install "
-                    "'ultralytics>=8.3.0'"
+                    "Could not import Ultralytics in the Python environment running "
+                    f"the backend: {exc}"
                 ) from exc
 
             common = self._load_common()
@@ -287,10 +313,7 @@ class RobotStereoDetectionService:
             matcher = common.create_sgbm(self.num_disparities, self.block_size)
             model = YOLOWorld(str(self.model_path))
             model.to(device)
-            # Reuse the reference folder's cached CLIP encoder instead of
-            # requiring a network download from the backend working directory.
-            ultralytics_text_model.WEIGHTS_DIR = self.source_dir / "weights"
-            model.set_classes(self.prompts)
+            _set_model_classes(model, self.prompts, self.source_dir, device)
             capture = common.StereoRtpCapture(
                 self.left_port,
                 self.right_port,

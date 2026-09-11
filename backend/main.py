@@ -16,6 +16,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from backend.robot_battery import RobotBatteryService
 from backend.robot_control import (
@@ -46,6 +47,7 @@ from backend.video_streaming import (
     VideoStreamingService,
     VideoStreamingStateError,
 )
+from backend.voice_ai import VoiceAIClient, VoiceAIError
 
 
 from backend.robot_stereo_detection import (
@@ -58,6 +60,7 @@ async def lifespan(app: FastAPI):
     app.state.robot_battery = RobotBatteryService()
     app.state.robot_control = RobotControlService()
     app.state.robot_audio = RobotAudioService()
+    app.state.voice_ai = VoiceAIClient()
     app.state.robot_services = RobotServiceManager()
     app.state.robot_teleoperation = RobotTeleoperationService()
     app.state.camera_start_lock = threading.Lock()
@@ -100,6 +103,10 @@ app.add_middleware(
 
 def robot_audio(request: Request) -> RobotAudioService:
     return request.app.state.robot_audio
+
+
+def voice_ai(request: Request) -> VoiceAIClient:
+    return request.app.state.voice_ai
 
 
 def robot_battery(request: Request) -> RobotBatteryService:
@@ -405,6 +412,41 @@ def speak_on_robot(request: Request, payload: SpeechRequest) -> dict[str, object
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
+@app.get("/api/robot/voice-chat/status")
+def robot_voice_chat_status(request: Request) -> dict[str, object]:
+    return voice_ai(request).status()
+
+
+@app.post("/api/robot/voice-chat")
+async def robot_voice_chat(request: Request) -> dict[str, object]:
+    content_type = request.headers.get("content-type", "application/octet-stream")
+    session_id = request.headers.get("x-voice-session", "robot-console").strip()
+    if not session_id or len(session_id) > 100:
+        raise HTTPException(status_code=422, detail="Invalid voice session ID.")
+    audio = await request.body()
+    if not audio or len(audio) > 25 * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail="Recorded audio is empty or exceeds 25 MB.",
+        )
+    ai_client = voice_ai(request)
+    audio_service = robot_audio(request)
+
+    def converse_and_play() -> dict[str, object]:
+        result = ai_client.converse(audio, content_type, session_id)
+        playback = audio_service.play_wav(result.pop("wav"))
+        return {**result, **playback}
+
+    try:
+        return await run_in_threadpool(converse_and_play)
+    except RobotAudioBusyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except VoiceAIError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except RobotAudioError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
 @app.post("/api/robot/led")
 def set_robot_led(request: Request, payload: LedRequest) -> dict[str, object]:
     try:
@@ -495,5 +537,3 @@ def robot_stereo_stream(
             "X-Accel-Buffering": "no",
         },
     )
-
-
