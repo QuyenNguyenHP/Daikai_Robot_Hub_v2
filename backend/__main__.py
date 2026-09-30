@@ -25,8 +25,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="API port (default: 8000)",
+        default=8010,
+        help="API port (default: 8010)",
     )
     return parser.parse_args()
 

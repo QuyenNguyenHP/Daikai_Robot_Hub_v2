@@ -95,6 +95,14 @@ export function speakOnRobot(text) {
 
 export const getRobotVoiceChatStatus = () => request('/api/robot/voice-chat/status')
 
+export function sendRobotTextMessage(messages) {
+  return request('/api/robot/text-chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  })
+}
+
 export function sendRobotVoiceMessage(audio, sessionId) {
   return request('/api/robot/voice-chat', {
     method: 'POST',

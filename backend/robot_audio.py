@@ -5,9 +5,13 @@ from __future__ import annotations
 import os
 import audioop
 import io
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 import wave
+from pathlib import Path
 
 from backend.unitree_dds import UNITREE_DDS_INIT_LOCK
 
@@ -233,6 +237,60 @@ class RobotAudioService:
             STREAM_SAMPLE_RATE * STREAM_CHANNELS * STREAM_SAMPLE_WIDTH
         )
         return pcm, duration
+
+    def speak_english(self, text: str) -> dict[str, object]:
+        normalized = " ".join(text.strip().split())
+        if not normalized:
+            raise RobotAudioError("Speech text cannot be empty.")
+        if len(normalized) > 10_000:
+            raise RobotAudioError("Speech text cannot exceed 10,000 characters.")
+
+        tts_backend = shutil.which("espeak-ng") or shutil.which("espeak")
+        converter = shutil.which("ffmpeg") or shutil.which("sox")
+        if not tts_backend:
+            raise RobotAudioError("Install espeak-ng or espeak for English robot speech.")
+        if not converter:
+            raise RobotAudioError("Install ffmpeg or sox for robot audio conversion.")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            raw_path = Path(temp_dir) / "tts_raw.wav"
+            robot_path = Path(temp_dir) / "tts_16k.wav"
+            synthesis = subprocess.run(
+                [tts_backend, "-v", "en-us", "-w", str(raw_path), normalized],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            if synthesis.returncode != 0:
+                raise RobotAudioError(
+                    synthesis.stderr.strip() or "English TTS synthesis failed."
+                )
+
+            if Path(converter).name.lower() == "ffmpeg":
+                command = [
+                    converter, "-y", "-i", str(raw_path), "-ac", "1", "-ar",
+                    str(STREAM_SAMPLE_RATE), "-sample_fmt", "s16", str(robot_path),
+                ]
+            else:
+                command = [
+                    converter, str(raw_path), "-r", str(STREAM_SAMPLE_RATE),
+                    "-c", "1", "-b", "16", str(robot_path),
+                ]
+            conversion = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            if conversion.returncode != 0:
+                raise RobotAudioError(
+                    conversion.stderr.strip() or "Robot audio conversion failed."
+                )
+            playback = self.play_wav(robot_path.read_bytes())
+
+        return {**playback, "text": normalized, "tts_backend": Path(tts_backend).name}
 
     def play_wav(self, wav_data: bytes) -> dict[str, object]:
         pcm, duration = self._wav_to_robot_pcm(wav_data)

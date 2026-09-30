@@ -292,6 +292,10 @@ input[type='range'] { width: 100%; accent-color: var(--cyan); margin: 14px 0 2px
 .voice-message.user { justify-self: end; background: rgba(85, 168, 223, .12); border-color: rgba(85, 168, 223, .24); }
 .voice-message small { color: var(--cyan); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; }
 .voice-message p { margin: 3px 0 0; color: #dce6f2; font-size: 12px; line-height: 1.45; }
+.voice-message.pending { opacity: .72; }
+.voice-chat-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-top: 12px; }
+.voice-chat-form .text-input { min-width: 0; }
+.voice-chat-form .button { min-width: 86px; }
 .voice-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .voice-actions > span { color: var(--muted); font-size: 10px; }
 .voice-recording i { width: 8px; height: 8px; display: inline-block; margin-right: 7px; border-radius: 50%; background: var(--danger); animation: voice-pulse 1s ease-in-out infinite; }

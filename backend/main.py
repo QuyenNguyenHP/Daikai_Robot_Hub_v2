@@ -4,7 +4,7 @@ import asyncio
 import os
 import threading
 from contextlib import asynccontextmanager
-from typing import Literal
+from typing import List, Literal
 
 from fastapi import (
     FastAPI,
@@ -131,6 +131,15 @@ def video_streaming(request: Request) -> VideoStreamingService:
 
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=10_000)
+
+
+class RobotTextChatRequest(BaseModel):
+    messages: List[ChatMessage] = Field(min_items=1, max_items=30)
 
 
 class LedRequest(BaseModel):
@@ -415,6 +424,36 @@ def speak_on_robot(request: Request, payload: SpeechRequest) -> dict[str, object
 @app.get("/api/robot/voice-chat/status")
 def robot_voice_chat_status(request: Request) -> dict[str, object]:
     return voice_ai(request).status()
+
+
+@app.post("/api/robot/text-chat")
+async def robot_text_chat(
+    request: Request,
+    payload: RobotTextChatRequest,
+) -> dict[str, object]:
+    if payload.messages[-1].role != "user":
+        raise HTTPException(
+            status_code=422,
+            detail="The last chat message must be from the user.",
+        )
+
+    ai_client = voice_ai(request)
+    audio_service = robot_audio(request)
+    messages = [message.dict() for message in payload.messages]
+
+    def chat_and_speak() -> dict[str, object]:
+        answer = ai_client.chat(messages)
+        playback = audio_service.speak_english(answer)
+        return {"text": answer, **playback}
+
+    try:
+        return await run_in_threadpool(chat_and_speak)
+    except RobotAudioBusyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except VoiceAIError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except RobotAudioError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.post("/api/robot/voice-chat")
