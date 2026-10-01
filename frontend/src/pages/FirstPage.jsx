@@ -4,6 +4,9 @@ import { RobotControlPanel } from '../components/RobotControlPanel'
 import { RobotLedPanel } from '../components/RobotLedPanel'
 import { VideoStreamingPanel } from '../components/VideoStreamingPanel'
 
+const ROBOT_CONVERSATION_ENABLED =
+  import.meta.env.VITE_ENABLE_ROBOT_CONVERSATION === 'true'
+
 export function FirstPage() {
   return (
     <div className="first-page">
@@ -11,7 +14,7 @@ export function FirstPage() {
         <BatteryStatus />
         <div className="console-column">
           <VideoStreamingPanel />
-          <RobotSpeechPanel />
+          {ROBOT_CONVERSATION_ENABLED && <RobotSpeechPanel />}
           <RobotLedPanel />
         </div>
         <RobotControlPanel />

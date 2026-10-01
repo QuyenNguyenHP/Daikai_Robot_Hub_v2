@@ -396,6 +396,48 @@ class RobotControlService:
             self._lock.release()
         return {"ok": True, "action": action, **details, **self.status()}
 
+    def execute_velocity(
+        self,
+        vx: float,
+        vy: float,
+        omega: float,
+        duration_seconds: float,
+    ) -> dict[str, object]:
+        """Send a bounded custom velocity command, then stop it explicitly."""
+        values = (vx, vy, omega, duration_seconds)
+        if not all(math.isfinite(value) for value in values):
+            raise RobotControlError("Velocity and duration values must be finite.")
+        if duration_seconds <= 0 or duration_seconds > COMMAND_DURATION:
+            raise RobotControlError(
+                f"Custom movement duration must be greater than 0 and at most "
+                f"{COMMAND_DURATION:.1f} seconds."
+            )
+        if abs(vx) > LINEAR_SPEED or abs(vy) > LATERAL_SPEED or abs(omega) > TURN_SPEED:
+            raise RobotControlError("Custom velocity exceeds configured robot limits.")
+        if not self._lock.acquire(blocking=False):
+            raise RobotControlBusyError("Another robot control command is running.")
+
+        try:
+            client = self._client_instance()
+            self._require_locomotion(client)
+            code = client.SetVelocity(vx, vy, omega, duration_seconds)
+            self._require_success(code, "custom velocity movement")
+            self._set_result("custom_velocity")
+            time.sleep(duration_seconds)
+            code = client.SetVelocity(0.0, 0.0, 0.0, COMMAND_DURATION)
+            self._require_success(code, "stop custom velocity movement")
+            self._set_result("stop")
+        except RobotControlError as exc:
+            self._set_result("custom_velocity", error=str(exc))
+            raise
+        except Exception as exc:
+            message = f"Custom robot movement failed: {exc}"
+            self._set_result("custom_velocity", error=message)
+            raise RobotControlError(message) from exc
+        finally:
+            self._lock.release()
+        return {"ok": True, "action": "custom_velocity", **self.status()}
+
     def mode(self) -> dict[str, object]:
         """Query the robot's registered FSM mode through locomotion API 7001."""
         if not self._lock.acquire(blocking=False):

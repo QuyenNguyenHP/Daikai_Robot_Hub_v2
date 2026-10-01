@@ -129,10 +129,48 @@ def _disparity_preview(disparity: np.ndarray, num_disparities: int) -> np.ndarra
     return preview
 
 
+def _region_distance(
+    points_3d: np.ndarray,
+    disparity: np.ndarray,
+    region: tuple[float, float, float, float],
+    min_distance_m: float,
+    max_distance_m: float,
+    mode: str,
+) -> float | None:
+    """Return a robust near distance in a normalized image region.
+
+    The fifth percentile reacts to obstacles occupying a meaningful part of
+    the forward view while rejecting isolated bad disparity pixels.
+    """
+    height, width = disparity.shape[:2]
+    x1 = max(0, min(width - 1, int(width * region[0])))
+    y1 = max(0, min(height - 1, int(height * region[1])))
+    x2 = max(x1 + 1, min(width, int(width * region[2])))
+    y2 = max(y1 + 1, min(height, int(height * region[3])))
+    roi_points = points_3d[y1:y2, x1:x2]
+    roi_disparity = disparity[y1:y2, x1:x2]
+    distances = (
+        np.linalg.norm(roi_points, axis=2)
+        if mode == "euclidean"
+        else roi_points[:, :, 2]
+    )
+    valid = (
+        np.isfinite(distances)
+        & (roi_disparity > 0.5)
+        & (distances >= min_distance_m)
+        & (distances <= max_distance_m)
+    )
+    samples = distances[valid]
+    if samples.size < 100:
+        return None
+    return float(np.percentile(samples, 5))
+
+
 class RobotStereoDetectionService:
     """Run one shared stereo/YOLO pipeline and retain two newest JPEG views."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, enable_object_detection: bool = True) -> None:
+        self.enable_object_detection = enable_object_detection
         self.source_dir = Path(os.getenv("R1_STEREO_SOURCE_DIR", str(REFERENCE_DIR)))
         self.calibration_path = Path(
             os.getenv(
@@ -173,6 +211,9 @@ class RobotStereoDetectionService:
         self.distance_mode = os.getenv("R1_STEREO_DISTANCE_MODE", "z")
         if self.distance_mode not in {"z", "euclidean"}:
             self.distance_mode = "z"
+        # Normalized left, top, right, bottom bounds of the forward corridor.
+        # Keeping the bottom of the image out reduces floor-triggered turns.
+        self.obstacle_region = (0.25, 0.20, 0.75, 0.75)
 
         self._condition = threading.Condition()
         self._stop_event = threading.Event()
@@ -188,6 +229,7 @@ class RobotStereoDetectionService:
         self._yolo_ms = 0.0
         self._pair_delta_ms = 0.0
         self._baseline_m: float | None = None
+        self._obstacle_distance_m: float | None = None
 
     def _configuration_error(self) -> str | None:
         common_path = self.source_dir / "r1_stereo_common.py"
@@ -195,9 +237,9 @@ class RobotStereoDetectionService:
             return f"Stereo reference module not found: {common_path}"
         if not self.calibration_path.is_file():
             return f"Stereo calibration not found: {self.calibration_path}"
-        if not self.model_path.is_file():
+        if self.enable_object_detection and not self.model_path.is_file():
             return f"YOLO-World model not found: {self.model_path}"
-        if not self.prompts:
+        if self.enable_object_detection and not self.prompts:
             return "R1_YOLO_WORLD_CLASSES must contain at least one class."
         return None
 
@@ -215,6 +257,7 @@ class RobotStereoDetectionService:
             self._last_frame_at = None
             self._fps = self._stereo_ms = self._yolo_ms = self._pair_delta_ms = 0.0
             self._device_name = None
+            self._obstacle_distance_m = None
             self._stop_event.clear()
             self._state = "loading"
             self._error = None
@@ -289,31 +332,44 @@ class RobotStereoDetectionService:
             global cv2, np
             import cv2
             import numpy as np
-            import torch
-
-            device = torch.device("cuda:" + self.device if self.device.isdigit() else self.device)
-            if device.type not in {"cuda", "cpu"}:
-                raise RobotStereoError("R1_YOLO_DEVICE must be cuda:0, a GPU index, or cpu.")
-            if device.type == "cuda" and not torch.cuda.is_available():
-                raise RobotStereoError(
-                    "CUDA is unavailable. Install a CUDA-enabled PyTorch build matching "
-                    "your JetPack and Python versions. CPU is only used if R1_YOLO_DEVICE=cpu."
-                )
-            self._device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
-            try:
-                from ultralytics import YOLOWorld
-            except ImportError as exc:
-                raise RobotStereoError(
-                    "Could not import Ultralytics in the Python environment running "
-                    f"the backend: {exc}"
-                ) from exc
 
             common = self._load_common()
             geometry = common.StereoGeometry(self.calibration_path)
             matcher = common.create_sgbm(self.num_disparities, self.block_size)
-            model = YOLOWorld(str(self.model_path))
-            model.to(device)
-            _set_model_classes(model, self.prompts, self.source_dir, device)
+            model = None
+            if self.enable_object_detection:
+                import torch
+
+                device = torch.device(
+                    "cuda:" + self.device if self.device.isdigit() else self.device
+                )
+                if device.type not in {"cuda", "cpu"}:
+                    raise RobotStereoError(
+                        "R1_YOLO_DEVICE must be cuda:0, a GPU index, or cpu."
+                    )
+                if device.type == "cuda" and not torch.cuda.is_available():
+                    raise RobotStereoError(
+                        "CUDA is unavailable. Install a CUDA-enabled PyTorch build matching "
+                        "your JetPack and Python versions. CPU is only used if "
+                        "R1_YOLO_DEVICE=cpu."
+                    )
+                self._device_name = (
+                    torch.cuda.get_device_name(device)
+                    if device.type == "cuda"
+                    else "CPU"
+                )
+                try:
+                    from ultralytics import YOLOWorld
+                except ImportError as exc:
+                    raise RobotStereoError(
+                        "Could not import Ultralytics in the Python environment running "
+                        f"the backend: {exc}"
+                    ) from exc
+                model = YOLOWorld(str(self.model_path))
+                model.to(device)
+                _set_model_classes(model, self.prompts, self.source_dir, device)
+            else:
+                self._device_name = "depth only"
             capture = common.StereoRtpCapture(
                 self.left_port,
                 self.right_port,
@@ -364,7 +420,7 @@ class RobotStereoDetectionService:
                 rectify_ms = (time.monotonic() - processing_started) * 1000.0
                 annotated = left_rectified.copy()
 
-                if frame_index % self.detect_every == 0:
+                if model is not None and frame_index % self.detect_every == 0:
                     options = {
                         "conf": self.confidence,
                         "imgsz": self.image_size,
@@ -397,6 +453,14 @@ class RobotStereoDetectionService:
 
                 disparity, points_3d, depth_ms = depth_future.result()
                 stereo_ms = rectify_ms + depth_ms
+                obstacle_distance = _region_distance(
+                    points_3d,
+                    disparity,
+                    self.obstacle_region,
+                    self.min_distance_m,
+                    self.max_distance_m,
+                    self.distance_mode,
+                )
 
                 detection_payload = []
                 for detection_index, detection in enumerate(cached_detections):
@@ -460,6 +524,11 @@ class RobotStereoDetectionService:
                     self._stereo_ms = stereo_ms
                     self._yolo_ms = last_yolo_ms
                     self._pair_delta_ms = pair_delta_ms
+                    self._obstacle_distance_m = (
+                        round(obstacle_distance, 3)
+                        if obstacle_distance is not None
+                        else None
+                    )
                     self._state = "connected"
                     self._error = None
                     self._condition.notify_all()
@@ -485,6 +554,7 @@ class RobotStereoDetectionService:
                 "error": self._error or self._configuration_error(),
                 "device": self.device,
                 "device_name": self._device_name,
+                "object_detection_enabled": self.enable_object_detection,
                 "frame_sequence": self._sequence,
                 "last_frame_age_seconds": age,
                 "detections": list(self._detections) if self._state == "connected" else [],
@@ -493,6 +563,8 @@ class RobotStereoDetectionService:
                 "yolo_ms": round(self._yolo_ms, 1),
                 "pair_delta_ms": round(self._pair_delta_ms, 1),
                 "baseline_m": self._baseline_m,
+                "obstacle_distance_m": self._obstacle_distance_m,
+                "obstacle_region": self.obstacle_region,
                 "distance_mode": self.distance_mode,
                 "classes": list(self.prompts),
                 "ports": {"left": self.left_port, "right": self.right_port},
