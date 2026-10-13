@@ -17,6 +17,17 @@ from typing import Iterator
 BACKEND_DIR = Path(__file__).resolve().parent
 REFERENCE_DIR = BACKEND_DIR / "r1_yolo_world_stereo"
 DEFAULT_CLASSES = "person,chair,bottle,cup,table,door,box"
+
+# ---------------------------------------------------------------------------
+# USER SETTINGS — CENTER CLEARANCE REGION
+# Values are normalized image coordinates from 0.0 to 1.0 in this order:
+# left, top, right, bottom. Keep LEFT < RIGHT and TOP < BOTTOM.
+# ---------------------------------------------------------------------------
+CENTER_CLEARANCE_LEFT = 0.40
+CENTER_CLEARANCE_TOP = 0.22
+CENTER_CLEARANCE_RIGHT = 0.68
+CENTER_CLEARANCE_BOTTOM = 0.75
+
 DETECTION_COLORS = (
     (80, 220, 120),
     (255, 180, 70),
@@ -136,11 +147,12 @@ def _region_distance(
     min_distance_m: float,
     max_distance_m: float,
     mode: str,
+    percentile: float = 10.0,
 ) -> float | None:
     """Return a robust near distance in a normalized image region.
 
-    The fifth percentile reacts to obstacles occupying a meaningful part of
-    the forward view while rejecting isolated bad disparity pixels.
+    A low percentile reacts to obstacles occupying a meaningful part of the
+    forward view while rejecting isolated bad disparity pixels.
     """
     height, width = disparity.shape[:2]
     x1 = max(0, min(width - 1, int(width * region[0])))
@@ -163,7 +175,7 @@ def _region_distance(
     samples = distances[valid]
     if samples.size < 100:
         return None
-    return float(np.percentile(samples, 5))
+    return float(np.percentile(samples, percentile))
 
 
 class RobotStereoDetectionService:
@@ -184,11 +196,7 @@ class RobotStereoDetectionService:
                 str(self.source_dir / "yolov8s-worldv2.pt"),
             )
         )
-        self.prompts = [
-            item.strip()
-            for item in os.getenv("R1_YOLO_WORLD_CLASSES", DEFAULT_CLASSES).split(",")
-            if item.strip()
-        ]
+        self.prompts = [item.strip() for item in DEFAULT_CLASSES.split(",")]
         self.left_port = _env_int("R1_STEREO_LEFT_PORT", 5002)
         self.right_port = _env_int("R1_STEREO_RIGHT_PORT", 5003)
         self.width = _env_int("R1_STEREO_WIDTH", 544)
@@ -213,9 +221,25 @@ class RobotStereoDetectionService:
             self.distance_mode = "z"
         # Normalized left, top, right, bottom bounds of the forward corridor.
         # Keeping the bottom of the image out reduces floor-triggered turns.
-        self.obstacle_region = (0.25, 0.20, 0.75, 0.75)
+        # Keep the corridor away from the less reliable left/right overlap
+        # boundaries of the stereo pair. It remains centered on the robot's
+        # forward travel direction.
+        self.obstacle_region = (
+            CENTER_CLEARANCE_LEFT,
+            CENTER_CLEARANCE_TOP,
+            CENTER_CLEARANCE_RIGHT,
+            CENTER_CLEARANCE_BOTTOM,
+        )
+        self.obstacle_percentile = min(
+            50.0, _env_float("R1_STEREO_OBSTACLE_PERCENTILE", 10.0)
+        )
+        self.disparity_consistency_px = _env_float(
+            "R1_STEREO_DISPARITY_CONSISTENCY_PX", 2.0
+        )
 
         self._condition = threading.Condition()
+        self._active_views: set[str] = set()
+        self._depth_consumers: set[str] = set()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._frames: dict[str, bytes | None] = {"detection": None, "depth": None}
@@ -231,23 +255,29 @@ class RobotStereoDetectionService:
         self._baseline_m: float | None = None
         self._obstacle_distance_m: float | None = None
 
-    def _configuration_error(self) -> str | None:
+    def _configuration_error(self, view: str | None = None) -> str | None:
         common_path = self.source_dir / "r1_stereo_common.py"
         if not common_path.is_file():
             return f"Stereo reference module not found: {common_path}"
         if not self.calibration_path.is_file():
             return f"Stereo calibration not found: {self.calibration_path}"
-        if self.enable_object_detection and not self.model_path.is_file():
+        needs_detection = self.enable_object_detection and view != "depth"
+        if needs_detection and not self.model_path.is_file():
             return f"YOLO-World model not found: {self.model_path}"
-        if self.enable_object_detection and not self.prompts:
+        if needs_detection and not self.prompts:
             return "R1_YOLO_WORLD_CLASSES must contain at least one class."
         return None
 
-    def start(self) -> None:
+    def start(self, view: str | None = None, *, visible: bool = True) -> None:
         with self._condition:
+            if view not in (None, "detection", "depth"):
+                raise RobotStereoError(f"Unknown stereo view: {view}")
+            if visible:
+                self._active_views.update(("detection", "depth") if view is None else (view,))
             if self._thread is not None and self._thread.is_alive():
+                self._condition.notify_all()
                 return
-            error = self._configuration_error()
+            error = self._configuration_error(view)
             if error:
                 self._state = "error"
                 self._error = error
@@ -266,10 +296,39 @@ class RobotStereoDetectionService:
             )
             self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, view: str | None = None) -> None:
+        with self._condition:
+            if view is not None:
+                self._active_views.discard(view)
+                self._frames[view] = None
+                if self._active_views:
+                    self._condition.notify_all()
+                    return
+            else:
+                self._active_views.clear()
+            if self._depth_consumers:
+                self._condition.notify_all()
+                return
         self._stop_event.set()
         with self._condition:
             self._condition.notify_all()
+
+    def acquire_depth_consumer(self, name: str) -> None:
+        with self._condition:
+            self._depth_consumers.add(name)
+        try:
+            self.start("depth", visible=False)
+        except Exception:
+            with self._condition:
+                self._depth_consumers.discard(name)
+            raise
+
+    def release_depth_consumer(self, name: str) -> None:
+        with self._condition:
+            self._depth_consumers.discard(name)
+            should_stop = not self._depth_consumers and not self._active_views
+        if should_stop:
+            self.stop()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=30.0)
@@ -337,7 +396,8 @@ class RobotStereoDetectionService:
             geometry = common.StereoGeometry(self.calibration_path)
             matcher = common.create_sgbm(self.num_disparities, self.block_size)
             model = None
-            if self.enable_object_detection:
+
+            def load_detection_model():
                 import torch
 
                 device = torch.device(
@@ -365,11 +425,12 @@ class RobotStereoDetectionService:
                         "Could not import Ultralytics in the Python environment running "
                         f"the backend: {exc}"
                     ) from exc
-                model = YOLOWorld(str(self.model_path))
-                model.to(device)
-                _set_model_classes(model, self.prompts, self.source_dir, device)
-            else:
-                self._device_name = "depth only"
+                loaded_model = YOLOWorld(str(self.model_path))
+                loaded_model.to(device)
+                _set_model_classes(loaded_model, self.prompts, self.source_dir, device)
+                return loaded_model
+
+            self._device_name = "depth only"
             capture = common.StereoRtpCapture(
                 self.left_port,
                 self.right_port,
@@ -390,6 +451,18 @@ class RobotStereoDetectionService:
         def compute_depth(left, right):
             started = time.monotonic()
             disparity = common.compute_disparity(matcher, left, right)
+            # Reject isolated SGBM mismatches. These commonly appear as false
+            # near-depth patches in dark/low-texture areas and near occlusion
+            # boundaries, especially on the left side of the disparity map.
+            local_median = cv2.medianBlur(disparity, 5)
+            locally_consistent = (
+                (disparity > 0.5)
+                & (local_median > 0.5)
+                & (np.abs(disparity - local_median) <= self.disparity_consistency_px)
+            )
+            disparity = np.where(locally_consistent, local_median, -1.0).astype(
+                np.float32
+            )
             points = geometry.points_from_disparity(disparity)
             return disparity, points, (time.monotonic() - started) * 1000.0
 
@@ -400,6 +473,12 @@ class RobotStereoDetectionService:
         last_yolo_ms = 0.0
         try:
             while not self._stop_event.is_set():
+                with self._condition:
+                    detection_active = "detection" in self._active_views
+                if detection_active and model is None:
+                    with self._condition:
+                        self._state = "loading"
+                    model = load_detection_model()
                 try:
                     left, right, pair_delta_ms = capture.read_pair(
                         timeout_s=2.0,
@@ -420,7 +499,7 @@ class RobotStereoDetectionService:
                 rectify_ms = (time.monotonic() - processing_started) * 1000.0
                 annotated = left_rectified.copy()
 
-                if model is not None and frame_index % self.detect_every == 0:
+                if detection_active and model is not None and frame_index % self.detect_every == 0:
                     options = {
                         "conf": self.confidence,
                         "imgsz": self.image_size,
@@ -460,33 +539,23 @@ class RobotStereoDetectionService:
                     self.min_distance_m,
                     self.max_distance_m,
                     self.distance_mode,
+                    self.obstacle_percentile,
                 )
 
                 detection_payload = []
-                for detection_index, detection in enumerate(cached_detections):
+                for detection_index, detection in enumerate(cached_detections if detection_active else []):
                     x1, y1, x2, y2, name, confidence = detection
                     color = DETECTION_COLORS[detection_index % len(DETECTION_COLORS)]
                     blue, green, red = color
                     color_hex = f"#{red:02x}{green:02x}{blue:02x}"
-                    distance = _object_distance(
-                        points_3d,
-                        disparity,
-                        (x1, y1, x2, y2),
-                        self.inner_scale,
-                        self.min_distance_m,
-                        self.max_distance_m,
-                        self.distance_mode,
-                    )
                     detection_payload.append(
                         {
                             "name": name,
                             "confidence": round(confidence, 4),
-                            "distance_m": round(distance, 3) if distance is not None else None,
                             "color": color_hex,
                         }
                     )
-                    distance_text = "no depth" if distance is None else f"{distance:.2f} m"
-                    label = f"{name} {confidence:.2f} | {distance_text}"
+                    label = f"{name} {confidence:.2f}"
                     cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(
                         annotated,
@@ -505,6 +574,33 @@ class RobotStereoDetectionService:
                 fps = instant_fps if self._fps == 0.0 else 0.9 * self._fps + 0.1 * instant_fps
                 previous_time = now
                 depth_view = _disparity_preview(disparity, self.num_disparities)
+                region_left, region_top, region_right, region_bottom = self.obstacle_region
+                region_x1 = int(depth_view.shape[1] * region_left)
+                region_y1 = int(depth_view.shape[0] * region_top)
+                region_x2 = int(depth_view.shape[1] * region_right)
+                region_y2 = int(depth_view.shape[0] * region_bottom)
+                cv2.rectangle(
+                    depth_view,
+                    (region_x1, region_y1),
+                    (region_x2, region_y2),
+                    (80, 230, 230),
+                    2,
+                )
+                obstacle_text = (
+                    "CENTER CLEARANCE: unavailable"
+                    if obstacle_distance is None
+                    else f"CENTER CLEARANCE: {obstacle_distance:.2f} m"
+                )
+                cv2.putText(
+                    depth_view,
+                    obstacle_text,
+                    (region_x1, max(20, region_y1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (80, 230, 230),
+                    2,
+                    cv2.LINE_AA,
+                )
                 ok_detection, detection_jpeg = cv2.imencode(
                     ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 82]
                 )
@@ -515,8 +611,10 @@ class RobotStereoDetectionService:
                     raise RobotStereoError("Could not encode stereo output frames.")
 
                 with self._condition:
-                    self._frames["detection"] = detection_jpeg.tobytes()
-                    self._frames["depth"] = depth_jpeg.tobytes()
+                    if "detection" in self._active_views:
+                        self._frames["detection"] = detection_jpeg.tobytes()
+                    if "depth" in self._active_views:
+                        self._frames["depth"] = depth_jpeg.tobytes()
                     self._sequence += 1
                     self._last_frame_at = time.time()
                     self._detections = detection_payload
@@ -541,17 +639,26 @@ class RobotStereoDetectionService:
 
     def status(self) -> dict[str, object]:
         with self._condition:
+            configuration_view = "detection" if "detection" in self._active_views else "depth"
             age = (
                 round(time.time() - self._last_frame_at, 3)
                 if self._last_frame_at is not None
                 else None
             )
             return {
-                "configured": self._configuration_error() is None,
+                "configured": self._configuration_error("depth") is None,
+                "view_configured": {
+                    "detection": self._configuration_error("detection") is None,
+                    "depth": self._configuration_error("depth") is None,
+                },
                 "state": self._state,
                 "running": self._thread is not None and self._thread.is_alive(),
+                "views": {
+                    "detection": "detection" in self._active_views,
+                    "depth": "depth" in self._active_views,
+                },
                 "connected": self._state == "connected" and not self._stop_event.is_set(),
-                "error": self._error or self._configuration_error(),
+                "error": self._error or self._configuration_error(configuration_view),
                 "device": self.device,
                 "device_name": self._device_name,
                 "object_detection_enabled": self.enable_object_detection,
@@ -565,6 +672,8 @@ class RobotStereoDetectionService:
                 "baseline_m": self._baseline_m,
                 "obstacle_distance_m": self._obstacle_distance_m,
                 "obstacle_region": self.obstacle_region,
+                "obstacle_percentile": self.obstacle_percentile,
+                "disparity_consistency_px": self.disparity_consistency_px,
                 "distance_mode": self.distance_mode,
                 "classes": list(self.prompts),
                 "ports": {"left": self.left_port, "right": self.right_port},
@@ -579,9 +688,12 @@ class RobotStereoDetectionService:
                 self._condition.wait_for(
                     lambda: self._sequence > sequence
                     or self._stop_event.is_set()
+                    or view not in self._active_views
                     or self._state == "error",
                     timeout=5.0,
                 )
+                if view not in self._active_views:
+                    break
                 if self._sequence <= sequence or self._frames[view] is None:
                     if self._state == "error":
                         break

@@ -11,10 +11,19 @@ import time
 from backend.unitree_dds import UNITREE_DDS_INIT_LOCK
 
 
-COMMAND_DURATION = 1.0
-LINEAR_SPEED = 0.5
-LATERAL_SPEED = 0.4
-TURN_SPEED = math.radians(60.0)
+# ---------------------------------------------------------------------------
+# USER SETTINGS
+# Change these values to customize one-button movement on the Robot Control
+# panel. Each press sends one bounded command using these settings.
+# ---------------------------------------------------------------------------
+COMMAND_DURATION = 1.0       # Seconds per Forward/Backward/Left/Right/Turn press.
+LINEAR_SPEED = 0.5           # Forward/backward speed in metres per second.
+LATERAL_SPEED = 0.4          # Left/right sidestep speed in metres per second.
+TURN_SPEED_RAD_S = 1.0       # Left/right turn angular velocity magnitude.
+
+# Internal alias used by the movement command table.
+TURN_SPEED = TURN_SPEED_RAD_S
+
 LOCOMOTION_FSM_ID = 811
 LOCOMOTION_FSM_IDS = frozenset({811, 816})
 FSM_NAMES = {
@@ -75,6 +84,9 @@ class RobotControlService:
         self._last_action: str | None = None
         self._last_code: int | None = None
         self._error: str | None = None
+        self._accept_velocity_code_127 = os.getenv(
+            "UNITREE_ACCEPT_VELOCITY_CODE_127", "true"
+        ).strip().lower() not in {"0", "false", "no", "off"}
         self._polishing_stop = threading.Event()
         self._polishing_thread: threading.Thread | None = None
         self._polishing_arm: str | None = None
@@ -99,6 +111,7 @@ class RobotControlService:
                 "linear_speed_mps": LINEAR_SPEED,
                 "lateral_speed_mps": LATERAL_SPEED,
                 "turn_speed_radps": TURN_SPEED,
+                "accept_velocity_code_127": self._accept_velocity_code_127,
                 "polishing_active": bool(
                     self._polishing_thread and self._polishing_thread.is_alive()
                 ),
@@ -204,6 +217,13 @@ class RobotControlService:
             raise RobotControlError(
                 f"Robot rejected {action.replace('_', ' ')} with code {code}."
             )
+
+    def _require_velocity_success(self, code: int, action: str) -> None:
+        # Some R1 ai_sport firmware executes SetVelocity but returns 127 for
+        # every velocity request while in locomotion FSM 811/816.
+        if code == 127 and self._accept_velocity_code_127:
+            return
+        self._require_success(code, action)
 
     def _set_result(
         self,
@@ -313,7 +333,7 @@ class RobotControlService:
 
             elif action == "disable":
                 code = client.SetVelocity(0.0, 0.0, 0.0, COMMAND_DURATION)
-                self._require_success(code, "disable control")
+                self._require_velocity_success(code, "disable control")
                 code = client.SetFsmId(4)
                 self._require_success(code, "return to stance mode")
                 self._set_fsm_state(4)
@@ -321,7 +341,7 @@ class RobotControlService:
             elif action == "stop":
                 self._require_locomotion(client)
                 code = client.SetVelocity(0.0, 0.0, 0.0, COMMAND_DURATION)
-                self._require_success(code, action)
+                self._require_velocity_success(code, action)
 
             elif action == "lie_to_stand":
                 fsm_id = self._fsm_id(client)
@@ -379,7 +399,7 @@ class RobotControlService:
                 self._require_locomotion(client)
                 vx, vy, omega = VELOCITY_COMMANDS[action]
                 code = client.SetVelocity(vx, vy, omega, COMMAND_DURATION)
-                self._require_success(code, action)
+                self._require_velocity_success(code, action)
 
             else:
                 raise RobotControlError(f"Unsupported robot action: {action}")
@@ -421,12 +441,12 @@ class RobotControlService:
             client = self._client_instance()
             self._require_locomotion(client)
             code = client.SetVelocity(vx, vy, omega, duration_seconds)
-            self._require_success(code, "custom velocity movement")
-            self._set_result("custom_velocity")
+            self._require_velocity_success(code, "custom velocity movement")
+            self._set_result("custom_velocity", code=code)
             time.sleep(duration_seconds)
             code = client.SetVelocity(0.0, 0.0, 0.0, COMMAND_DURATION)
-            self._require_success(code, "stop custom velocity movement")
-            self._set_result("stop")
+            self._require_velocity_success(code, "stop custom velocity movement")
+            self._set_result("stop", code=code)
         except RobotControlError as exc:
             self._set_result("custom_velocity", error=str(exc))
             raise

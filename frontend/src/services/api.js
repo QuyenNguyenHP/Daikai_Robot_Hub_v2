@@ -138,6 +138,14 @@ export const stopRobotStereo = () => (
   request('/api/robot/stereo/stop', { method: 'POST' })
 )
 
+export const startRobotStereoView = (view) => (
+  request(`/api/robot/stereo/start/${view}`, { method: 'POST' })
+)
+
+export const stopRobotStereoView = (view) => (
+  request(`/api/robot/stereo/stop/${view}`, { method: 'POST' })
+)
+
 export function setRobotStereoClasses(classes) {
   return request('/api/robot/stereo/classes', {
     method: 'POST',
@@ -148,4 +156,24 @@ export function setRobotStereoClasses(classes) {
 
 export const getRobotStereoStreamUrl = (view, version = 0) => (
   `${API_URL}/api/robot/stereo/stream/${view}?stream_version=${version}`
+)
+
+export const getRobotAutoWalkStatus = () => request('/api/robot/auto-walk/status')
+
+export function getRobotAutoWalkWebSocketUrl() {
+  const url = new URL('/api/robot/auto-walk/ws', API_URL)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
+
+export function startRobotAutoWalk(settings) {
+  return request('/api/robot/auto-walk/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+}
+
+export const stopRobotAutoWalk = () => (
+  request('/api/robot/auto-walk/stop', { method: 'POST' })
 )

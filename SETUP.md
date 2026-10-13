@@ -62,7 +62,7 @@ python3 backend <robot-network-interface>
 For example:
 
 ```bash
-python3 backend eth0
+python3 backend eth10
 ```
 
 ## 4. Set up the frontend

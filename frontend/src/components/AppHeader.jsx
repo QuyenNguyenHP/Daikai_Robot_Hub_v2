@@ -4,7 +4,7 @@ import drumsLogo from '../../photos/DRUMS_logo.png'
 const NAV_ITEMS = [
   ['console', 'Console'],
   ['teleoperation', 'Teleoperation'],
-  ['object-distance', 'Object Distance'],
+  ['object-distance', 'Autonomous Walk'],
   ['services', 'System Services'],
 ]
 

@@ -53,6 +53,7 @@ from backend.voice_ai import VoiceAIClient, VoiceAIError
 from backend.robot_stereo_detection import (
     RobotStereoDetectionService, RobotStereoError, RobotStereoStateError,
 )
+from backend.robot_auto_walk import RobotAutoWalkError, RobotAutoWalkService
 
 
 @asynccontextmanager
@@ -66,6 +67,10 @@ async def lifespan(app: FastAPI):
     app.state.camera_start_lock = threading.Lock()
     app.state.video_streaming = VideoStreamingService()
     app.state.robot_stereo_detection = RobotStereoDetectionService()
+    app.state.robot_auto_walk = RobotAutoWalkService(
+        app.state.robot_stereo_detection,
+        app.state.robot_control,
+    )
     app.state.robot_battery.start()
     try:
         yield
@@ -75,6 +80,7 @@ async def lifespan(app: FastAPI):
         app.state.robot_audio.stop()
         app.state.robot_teleoperation.shutdown()
         app.state.video_streaming.shutdown()
+        app.state.robot_auto_walk.shutdown()
         app.state.robot_stereo_detection.stop()
 
 
@@ -509,6 +515,48 @@ class StereoClassesRequest(BaseModel):
     classes: list[str] = Field(min_length=1, max_length=30)
 
 
+class AutoWalkRequest(BaseModel):
+    forward_steps: int = Field(default=2, ge=1, le=100)
+    max_right_turns: int = Field(default=10, ge=1, le=20)
+    clearance_m: float = Field(default=0.5, ge=0.3, le=5.0)
+    forward_speed_m_s: float = Field(default=0.4, gt=0.0, le=0.5)
+    turn_speed_rad_s: float = Field(default=1.0, gt=0.0, le=1.0)
+
+
+def robot_auto_walk(request: Request) -> RobotAutoWalkService:
+    return request.app.state.robot_auto_walk
+
+
+@app.get("/api/robot/auto-walk/status")
+def robot_auto_walk_status(request: Request) -> dict[str, object]:
+    return robot_auto_walk(request).status()
+
+
+@app.websocket("/api/robot/auto-walk/ws")
+async def robot_auto_walk_status_websocket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    service: RobotAutoWalkService = websocket.app.state.robot_auto_walk
+    try:
+        while True:
+            await websocket.send_json(service.status())
+            await asyncio.sleep(0.5)
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
+@app.post("/api/robot/auto-walk/start")
+def start_robot_auto_walk(request: Request, payload: AutoWalkRequest) -> dict[str, object]:
+    try:
+        return robot_auto_walk(request).start(**payload.dict())
+    except RobotAutoWalkError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/robot/auto-walk/stop")
+def stop_robot_auto_walk(request: Request) -> dict[str, object]:
+    return robot_auto_walk(request).stop()
+
+
 @app.get("/api/robot/stereo/status")
 def robot_stereo_status(request: Request) -> dict[str, object]:
     return robot_stereo_detection(request).status()
@@ -541,10 +589,36 @@ def start_robot_stereo(request: Request) -> dict[str, object]:
     return detector.status()
 
 
+@app.post("/api/robot/stereo/start/{view}")
+def start_robot_stereo_view(
+    request: Request,
+    view: Literal["detection", "depth"],
+) -> dict[str, object]:
+    detector = robot_stereo_detection(request)
+    try:
+        with request.app.state.camera_start_lock:
+            if video_streaming(request).status()["running"]:
+                raise HTTPException(status_code=409, detail="Stop the video viewer before starting a stereo monitor.")
+            detector.start(view)
+    except RobotStereoError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return detector.status()
+
+
 @app.post("/api/robot/stereo/stop")
 def stop_robot_stereo(request: Request) -> dict[str, object]:
     detector = robot_stereo_detection(request)
     detector.stop()
+    return detector.status()
+
+
+@app.post("/api/robot/stereo/stop/{view}")
+def stop_robot_stereo_view(
+    request: Request,
+    view: Literal["detection", "depth"],
+) -> dict[str, object]:
+    detector = robot_stereo_detection(request)
+    detector.stop(view)
     return detector.status()
 
 
