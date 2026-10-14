@@ -1,4 +1,16 @@
 const API_URL = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/$/, '')
+const WS_BASE_URL = (
+  import.meta.env.VITE_WS_URL
+  || (import.meta.env.DEV
+    ? `${window.location.protocol}//${window.location.hostname}:8010`
+    : API_URL)
+).replace(/\/$/, '')
+
+function webSocketUrl(path) {
+  const url = new URL(path, WS_BASE_URL)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  return url.toString()
+}
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, options)
@@ -18,12 +30,14 @@ export const getHealth = () => request('/api/health')
 export const getRobotBattery = () => request('/api/robot/battery')
 
 export function getRobotBatteryWebSocketUrl() {
-  const url = new URL('/api/robot/battery/ws', API_URL)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
+  return webSocketUrl('/api/robot/battery/ws')
 }
 
 export const getRobotControlStatus = () => request('/api/robot/control/status')
+
+export function getRobotControlStatusWebSocketUrl() {
+  return webSocketUrl('/api/robot/control/status/ws')
+}
 
 export const getVideoStreamStatus = () => request('/api/video-stream/status')
 
@@ -72,9 +86,7 @@ export function stopTeleoperation() {
 export const getRobotMode = () => request('/api/robot/mode')
 
 export function getRobotModeWebSocketUrl() {
-  const url = new URL('/api/robot/mode/ws', API_URL)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
+  return webSocketUrl('/api/robot/mode/ws')
 }
 
 export function controlRobot(action, options = {}) {
@@ -125,9 +137,7 @@ export function setRobotLed(red, green, blue, keepOn = false) {
 export const getRobotStereoStatus = () => request('/api/robot/stereo/status')
 
 export function getRobotStereoWebSocketUrl() {
-  const url = new URL('/api/robot/stereo/ws', API_URL)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
+  return webSocketUrl('/api/robot/stereo/ws')
 }
 
 export const startRobotStereo = () => (
@@ -161,9 +171,7 @@ export const getRobotStereoStreamUrl = (view, version = 0) => (
 export const getRobotAutoWalkStatus = () => request('/api/robot/auto-walk/status')
 
 export function getRobotAutoWalkWebSocketUrl() {
-  const url = new URL('/api/robot/auto-walk/ws', API_URL)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
+  return webSocketUrl('/api/robot/auto-walk/ws')
 }
 
 export function startRobotAutoWalk(settings) {

@@ -18,10 +18,10 @@ def rtp_h264_pipeline(port: int, latency_ms: int = 100) -> str:
     return (
         f"udpsrc port={port} "
         'caps="application/x-rtp,media=video,clock-rate=90000,'
-        'encoding-name=H264,payload=96" ! '
+        'encoding-name=H264" ! '
         f"rtpjitterbuffer latency={latency_ms} drop-on-latency=true ! "
         "rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! "
-        "video/x-raw,format=BGR ! "
+        "videoscale ! video/x-raw,format=BGR ! "
         "appsink drop=true max-buffers=1 sync=false"
     )
 
@@ -92,7 +92,7 @@ class _CameraReader:
             "udpsrc",
             f"port={self.port}",
             "caps=application/x-rtp,media=video,clock-rate=90000,"
-            "encoding-name=H264,payload=96",
+            "encoding-name=H264",
             "!",
             "rtpjitterbuffer",
             f"latency={self.latency_ms}",
@@ -105,6 +105,8 @@ class _CameraReader:
             "avdec_h264",
             "!",
             "videoconvert",
+            "!",
+            "videoscale",
             "!",
             f"video/x-raw,format=BGR,width={self.width},height={self.height}",
             "!",

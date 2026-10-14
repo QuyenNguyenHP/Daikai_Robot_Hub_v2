@@ -220,6 +220,18 @@ def robot_control_status(request: Request) -> dict[str, object]:
     return robot_control(request).status()
 
 
+@app.websocket("/api/robot/control/status/ws")
+async def robot_control_status_websocket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    control: RobotControlService = websocket.app.state.robot_control
+    try:
+        while True:
+            await websocket.send_json(control.status())
+            await asyncio.sleep(0.5)
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
 @app.get("/api/video-stream/status")
 def video_stream_status(request: Request) -> dict[str, object]:
     return video_streaming(request).status()

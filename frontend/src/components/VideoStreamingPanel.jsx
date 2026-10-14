@@ -82,10 +82,14 @@ export function VideoStreamingPanel() {
       </div>
 
       <p className="video-stream-description">
-        Live camera video with YOLO-World object detection overlays.
+        YOLO-World object detection using the stereo camera pair on UDP ports{' '}
+        {status?.ports?.left || 5002} and {status?.ports?.right || 5003}.
       </p>
 
-      <div className={`video-viewer ${running ? 'active' : ''}`}>
+      <div
+        className={`video-viewer ${running ? 'active' : ''}`}
+        style={{ aspectRatio: '544 / 448' }}
+      >
         {running ? (
           <img
             key={feedKey}

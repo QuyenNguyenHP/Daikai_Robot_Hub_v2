@@ -19,14 +19,19 @@ REFERENCE_DIR = BACKEND_DIR / "r1_yolo_world_stereo"
 DEFAULT_CLASSES = "person,chair,bottle,cup,table,door,box"
 
 # ---------------------------------------------------------------------------
-# USER SETTINGS — CENTER CLEARANCE REGION
-# Values are normalized image coordinates from 0.0 to 1.0 in this order:
-# left, top, right, bottom. Keep LEFT < RIGHT and TOP < BOTTOM.
+# USER SETTINGS — CENTER CLEARANCE REGION (PIXELS)
+# X and Y are the top-left corner. WIDTH and HEIGHT are the box size.
+# The default stereo frame is 544 x 448 pixels.
 # ---------------------------------------------------------------------------
-CENTER_CLEARANCE_LEFT = 0.40
-CENTER_CLEARANCE_TOP = 0.22
-CENTER_CLEARANCE_RIGHT = 0.68
-CENTER_CLEARANCE_BOTTOM = 0.75
+CENTER_CLEARANCE_X = 300
+CENTER_CLEARANCE_Y = 180
+CENTER_CLEARANCE_WIDTH = 220
+CENTER_CLEARANCE_HEIGHT = 260
+
+# Nearest reliable obstacle calculation. The region is split into local cells;
+# cells with too little valid stereo depth are ignored as likely noise.
+CENTER_CLEARANCE_CELL_SIZE_PX = 16
+CENTER_CLEARANCE_MIN_VALID_RATIO = 0.40
 
 DETECTION_COLORS = (
     (80, 220, 120),
@@ -148,12 +153,10 @@ def _region_distance(
     max_distance_m: float,
     mode: str,
     percentile: float = 10.0,
+    cell_size_px: int = CENTER_CLEARANCE_CELL_SIZE_PX,
+    min_valid_ratio: float = CENTER_CLEARANCE_MIN_VALID_RATIO,
 ) -> float | None:
-    """Return a robust near distance in a normalized image region.
-
-    A low percentile reacts to obstacles occupying a meaningful part of the
-    forward view while rejecting isolated bad disparity pixels.
-    """
+    """Return the nearest reliable local surface in the image region."""
     height, width = disparity.shape[:2]
     x1 = max(0, min(width - 1, int(width * region[0])))
     y1 = max(0, min(height - 1, int(height * region[1])))
@@ -175,6 +178,26 @@ def _region_distance(
     samples = distances[valid]
     if samples.size < 100:
         return None
+
+    # A raw minimum is easily corrupted by one mismatched stereo pixel. Use
+    # the nearest median from a sufficiently populated local cell instead.
+    cell_distances = []
+    roi_height, roi_width = distances.shape
+    for cell_y in range(0, roi_height, cell_size_px):
+        for cell_x in range(0, roi_width, cell_size_px):
+            cell_y2 = min(roi_height, cell_y + cell_size_px)
+            cell_x2 = min(roi_width, cell_x + cell_size_px)
+            cell_valid = valid[cell_y:cell_y2, cell_x:cell_x2]
+            if (
+                cell_valid.size == 0
+                or np.count_nonzero(cell_valid) < cell_valid.size * min_valid_ratio
+            ):
+                continue
+            cell_values = distances[cell_y:cell_y2, cell_x:cell_x2][cell_valid]
+            cell_distances.append(float(np.median(cell_values)))
+
+    if cell_distances:
+        return min(cell_distances)
     return float(np.percentile(samples, percentile))
 
 
@@ -225,10 +248,10 @@ class RobotStereoDetectionService:
         # boundaries of the stereo pair. It remains centered on the robot's
         # forward travel direction.
         self.obstacle_region = (
-            CENTER_CLEARANCE_LEFT,
-            CENTER_CLEARANCE_TOP,
-            CENTER_CLEARANCE_RIGHT,
-            CENTER_CLEARANCE_BOTTOM,
+            CENTER_CLEARANCE_X / self.width,
+            CENTER_CLEARANCE_Y / self.height,
+            (CENTER_CLEARANCE_X + CENTER_CLEARANCE_WIDTH) / self.width,
+            (CENTER_CLEARANCE_Y + CENTER_CLEARANCE_HEIGHT) / self.height,
         )
         self.obstacle_percentile = min(
             50.0, _env_float("R1_STEREO_OBSTACLE_PERCENTILE", 10.0)
@@ -256,6 +279,18 @@ class RobotStereoDetectionService:
         self._obstacle_distance_m: float | None = None
 
     def _configuration_error(self, view: str | None = None) -> str | None:
+        if (
+            CENTER_CLEARANCE_X < 0
+            or CENTER_CLEARANCE_Y < 0
+            or CENTER_CLEARANCE_WIDTH < 1
+            or CENTER_CLEARANCE_HEIGHT < 1
+            or CENTER_CLEARANCE_X + CENTER_CLEARANCE_WIDTH > self.width
+            or CENTER_CLEARANCE_Y + CENTER_CLEARANCE_HEIGHT > self.height
+        ):
+            return (
+                "CENTER_CLEARANCE_X/Y/WIDTH/HEIGHT must define a positive region "
+                f"inside the {self.width}x{self.height} stereo frame."
+            )
         common_path = self.source_dir / "r1_stereo_common.py"
         if not common_path.is_file():
             return f"Stereo reference module not found: {common_path}"
@@ -674,6 +709,8 @@ class RobotStereoDetectionService:
                 "obstacle_region": self.obstacle_region,
                 "obstacle_percentile": self.obstacle_percentile,
                 "disparity_consistency_px": self.disparity_consistency_px,
+                "clearance_cell_size_px": CENTER_CLEARANCE_CELL_SIZE_PX,
+                "clearance_min_valid_ratio": CENTER_CLEARANCE_MIN_VALID_RATIO,
                 "distance_mode": self.distance_mode,
                 "classes": list(self.prompts),
                 "ports": {"left": self.left_port, "right": self.right_port},

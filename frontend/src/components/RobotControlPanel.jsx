@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   controlRobot,
-  getRobotControlStatus,
+  getRobotControlStatusWebSocketUrl,
   getRobotModeWebSocketUrl,
 } from '../services/api'
 import SliderSizes from './SliderSizes'
@@ -39,21 +39,34 @@ export function RobotControlPanel() {
 
   useEffect(() => {
     let active = true
-    getRobotControlStatus()
-      .then((result) => {
-        if (active) setStatus(result)
-      })
-      .catch(() => {})
+    let socket = null
+    let reconnectTimer = null
+    let reconnectDelay = 1000
+
+    const connect = () => {
+      socket = new WebSocket(getRobotControlStatusWebSocketUrl())
+      socket.onopen = () => { reconnectDelay = 1000 }
+      socket.onmessage = (event) => {
+        if (!active) return
+        try {
+          setStatus(JSON.parse(event.data))
+        } catch {
+          // Keep the last valid control state.
+        }
+      }
+      socket.onclose = () => {
+        if (!active) return
+        reconnectTimer = window.setTimeout(connect, reconnectDelay)
+        reconnectDelay = Math.min(reconnectDelay * 2, 5000)
+      }
+    }
+
+    connect()
     return () => {
       active = false
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close()
     }
-  }, [])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      getRobotControlStatus().then(setStatus).catch(() => {})
-    }, 1000)
-    return () => window.clearInterval(timer)
   }, [])
 
   useEffect(() => {
@@ -109,11 +122,6 @@ export function RobotControlPanel() {
       if (action === 'enable') setControlLocked(false)
     } catch (error) {
       if (!MOVEMENT_ACTIONS.has(action)) setControlError(error.message)
-      try {
-        setStatus(await getRobotControlStatus())
-      } catch {
-        // Keep the last known control state when status refresh also fails.
-      }
     } finally {
       requestInFlight.current = false
       setBusyAction('')
