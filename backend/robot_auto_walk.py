@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from statistics import median
 from typing import Any
 
 from backend.robot_control import RobotControlError, RobotControlService
@@ -12,6 +13,10 @@ from backend.robot_stereo_detection import RobotStereoDetectionService, RobotSte
 
 class RobotAutoWalkError(RuntimeError):
     pass
+
+
+# Number of consecutive fresh stereo frames used for each movement decision.
+CLEARANCE_SAMPLE_FRAMES = 8
 
 
 class RobotAutoWalkService:
@@ -79,18 +84,39 @@ class RobotAutoWalkService:
             raise InterruptedError
         raise RobotStereoError("Timed out waiting for a fresh stereo depth frame.")
 
+    def _measure_clearance(
+        self,
+        after_sequence: int,
+    ) -> tuple[float, int]:
+        """Return the median clearance from consecutive fresh stereo frames."""
+        clearances: list[float] = []
+        sequence = after_sequence
+        for sample_number in range(1, CLEARANCE_SAMPLE_FRAMES + 1):
+            status = self._wait_for_frame(sequence)
+            sequence = int(status["frame_sequence"])
+            distance = status.get("obstacle_distance_m")
+            if not isinstance(distance, (int, float)):
+                raise RobotStereoError(
+                    "Depth became unreliable while collecting 8 consecutive frames."
+                )
+            clearances.append(float(distance))
+            self._publish(
+                "measuring",
+                f"Measuring clearance: {sample_number}/{CLEARANCE_SAMPLE_FRAMES} frames.",
+                samples_collected=sample_number,
+                samples_required=CLEARANCE_SAMPLE_FRAMES,
+            )
+        return float(median(clearances)), sequence
+
     def _run(self) -> None:
         completed = turns = last_sequence = 0
         blocked = False
+        motion_cleanup_needed = False
         settings = dict(self._settings)
         try:
             self.detector.acquire_depth_consumer("autonomous_walk")
             while completed < int(settings["forward_steps"]) and not self._stop_event.is_set():
-                status = self._wait_for_frame(last_sequence)
-                last_sequence = int(status["frame_sequence"])
-                distance = status.get("obstacle_distance_m")
-                if not isinstance(distance, (int, float)):
-                    raise RobotStereoError("Depth is not reliable in the forward corridor.")
+                distance, last_sequence = self._measure_clearance(last_sequence)
                 if float(distance) < float(settings["clearance_m"]):
                     if turns >= int(settings["max_right_turns"]):
                         self._publish(
@@ -104,14 +130,20 @@ class RobotAutoWalkService:
                         blocked = True
                         break
                     turns += 1
+                    motion_cleanup_needed = True
                     self.controller.execute_velocity(0.0, 0.0, -float(settings["turn_speed_rad_s"]), 1.0)
+                    motion_cleanup_needed = False
                     self._publish("turn", f"Right turn {turns} completed.", completed_steps=completed, target_steps=settings["forward_steps"], completed_turns=turns, distance_m=round(float(distance), 3))
                 else:
+                    motion_cleanup_needed = True
                     self.controller.execute_velocity(float(settings["forward_speed_m_s"]), 0.0, 0.0, 1.0)
+                    motion_cleanup_needed = False
                     completed += 1
                     self._publish("step", f"Forward step {completed}/{settings['forward_steps']} completed.", completed_steps=completed, target_steps=settings["forward_steps"], completed_turns=turns, distance_m=round(float(distance), 3))
                 last_sequence = int(self.detector.status().get("frame_sequence", last_sequence))
-                time.sleep(0.6)
+                # Do not keep the UI in "Stop walking" after the final step.
+                if completed < int(settings["forward_steps"]):
+                    time.sleep(0.6)
             if self._stop_event.is_set():
                 self._publish("stopped", "Autonomous walk stopped.")
             elif not blocked:
@@ -123,10 +155,14 @@ class RobotAutoWalkService:
                 self._error = str(exc)
             self._publish("error", f"Autonomous walk stopped: {exc}")
         finally:
-            try:
-                self.controller.execute("stop")
-            except RobotControlError:
-                pass
+            # execute_velocity already sends an explicit stop after every
+            # successful bounded movement. Retry only when movement raised
+            # before confirming that stop, avoiding a duplicate final RPC.
+            if motion_cleanup_needed:
+                try:
+                    self.controller.execute("stop")
+                except RobotControlError:
+                    pass
             self.detector.release_depth_consumer("autonomous_walk")
 
     def stop(self) -> dict[str, Any]:

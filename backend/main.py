@@ -551,7 +551,7 @@ async def robot_auto_walk_status_websocket(websocket: WebSocket) -> None:
     try:
         while True:
             await websocket.send_json(service.status())
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
     except (WebSocketDisconnect, RuntimeError):
         return
 
