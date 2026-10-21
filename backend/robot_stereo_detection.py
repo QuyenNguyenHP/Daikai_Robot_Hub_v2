@@ -230,17 +230,11 @@ class RobotStereoDetectionService:
     def __init__(self, *, enable_object_detection: bool = True) -> None:
         self.enable_object_detection = enable_object_detection
         self.source_dir = Path(os.getenv("R1_STEREO_SOURCE_DIR", str(REFERENCE_DIR)))
-        new_calibration = Path(
-            "/home/daikai/unitree_sdk2_python/my_script/"
-            "r1_yolo_world_stereo/r1_stereo_calibration.new.npz"
-        )
-        default_calibration = (
-            new_calibration
-            if new_calibration.is_file()
-            else self.source_dir / "r1_stereo_calibration.npz"
-        )
         self.calibration_path = Path(
-            os.getenv("R1_STEREO_CALIBRATION", str(default_calibration))
+            os.getenv(
+                "R1_STEREO_CALIBRATION",
+                str(self.source_dir / "r1_stereo_calibration.npz"),
+            )
         )
         self.model_path = Path(
             os.getenv(
