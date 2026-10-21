@@ -145,6 +145,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 48px clamp(18px, 4vw, 64px) 7
 .default-object-list span { padding: 7px 10px; border: 1px solid var(--panel-border); border-radius: 999px; color: var(--cyan); background: rgba(6, 15, 26, .55); font-size: 10px; }
 .stereo-monitor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .autonomous-distance-grid { grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); align-items: start; }
+.distance-camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .center-corridor-panel h2 { margin: 7px 0; color: #7cebd1; font: 600 22px Manrope, sans-serif; }
 .center-corridor-panel > p:not(.eyebrow) { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .stereo-monitor-panel { min-width: 0; padding: 18px; }
@@ -383,7 +384,7 @@ footer { padding: 24px; text-align: center; color: #61728a; font-size: 11px; bor
   .camera-stage-details { grid-template-columns: 1fr; }
   .side-stack { grid-template-columns: 1fr 1fr; }
   .services-list { grid-template-columns: 1fr; }
-  .stereo-monitor-grid, .stereo-details-grid { grid-template-columns: 1fr; }
+  .stereo-monitor-grid, .stereo-details-grid, .distance-camera-grid { grid-template-columns: 1fr; }
   .stereo-page-heading { align-items: flex-start; flex-direction: column; }
   .stereo-class-editor { grid-template-columns: 1fr; align-items: stretch; }
   .teleoperation-controls { grid-template-columns: 1fr; align-items: stretch; }

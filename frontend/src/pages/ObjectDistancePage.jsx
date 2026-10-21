@@ -170,10 +170,11 @@ export function ObjectDistancePage() {
         {walk?.events?.some((item) => ['step', 'turn'].includes(item.type)) && <div className="auto-walk-history">{walk.events.filter((item) => ['step', 'turn'].includes(item.type)).map((item, index) => <div className={item.type} key={`${item.type}-${index}`}><strong>{item.type === 'step' ? 'Forward' : 'Turn right'}</strong><span>{item.message} Clearance {item.distance_m.toFixed(2)} m.</span></div>)}</div>}
       </section>
 
-      <div className="stereo-monitor-grid autonomous-distance-grid">
-        <Monitor title="Distance monitor" view="depth" running={Boolean(stereo?.views?.depth)} streamVersion={streamVersion} />
-        <section className="panel stereo-metrics-panel center-corridor-panel"><p className="eyebrow">CENTER TRAVEL CORRIDOR</p><h2>{stereo?.obstacle_distance_m == null ? 'No reliable depth' : `${stereo.obstacle_distance_m.toFixed(2)} m clearance`}</h2><p>The highlighted center rectangle is the only image region used to decide whether the robot moves forward or turns right.</p><div className="stereo-metrics"><div><strong>{stereo?.fps ?? '—'}</strong><span>FPS</span></div><div><strong>{stereo?.stereo_ms ?? '—'}</strong><span>Stereo ms</span></div><div><strong>2</strong><span>Cameras</span></div><div><strong>{stereo?.pair_delta_ms ?? '—'}</strong><span>Pair delta ms</span></div></div></section>
+      <div className="distance-camera-grid">
+        <Monitor title="Left camera" view="left" running={Boolean(stereo?.views?.left)} streamVersion={streamVersion} />
+        <Monitor title="Metric depth heatmap" view="depth" running={Boolean(stereo?.views?.depth)} streamVersion={streamVersion} />
       </div>
+      <section className="panel stereo-metrics-panel center-corridor-panel"><p className="eyebrow">CENTER TRAVEL CORRIDOR</p><h2>{stereo?.obstacle_distance_m == null ? 'No reliable depth' : `${stereo.obstacle_distance_m.toFixed(2)} m clearance`}</h2><p>The highlighted center rectangle is the only image region used to decide whether the robot moves forward or turns right.</p><div className="stereo-metrics"><div><strong>{stereo?.fps ?? '—'}</strong><span>FPS</span></div><div><strong>{stereo?.stereo_ms ?? '—'}</strong><span>Stereo ms</span></div><div><strong>2</strong><span>Cameras used for depth</span></div><div><strong>{stereo?.pair_delta_ms ?? '—'}</strong><span>Pair delta ms</span></div></div></section>
       <p className="stereo-safety-note">Stereo depth is a perception estimate, not a safety-rated collision sensor. Keep the emergency stop ready.</p>
     </div>
   )

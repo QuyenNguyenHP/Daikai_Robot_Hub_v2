@@ -20,13 +20,10 @@ DEFAULT_CLASSES = "person,chair,bottle,cup,table,door,box"
 
 # ---------------------------------------------------------------------------
 # USER SETTINGS — CENTER CLEARANCE REGION (PIXELS)
-# X and Y are the top-left corner. WIDTH and HEIGHT are the box size.
-# The default stereo frame is 544 x 448 pixels.
+# The box is centered dynamically for the calibrated image size.
 # ---------------------------------------------------------------------------
-CENTER_CLEARANCE_X = 300
-CENTER_CLEARANCE_Y = 180
-CENTER_CLEARANCE_WIDTH = 220
-CENTER_CLEARANCE_HEIGHT = 260
+CENTER_CLEARANCE_WIDTH = 110
+CENTER_CLEARANCE_HEIGHT = 130
 
 # Nearest reliable obstacle calculation. The region is split into local cells;
 # cells with too little valid stereo depth are ignored as likely noise.
@@ -136,12 +133,38 @@ def _object_distance(
     return float(np.median(trimmed)) if trimmed.size >= 10 else None
 
 
-def _disparity_preview(disparity: np.ndarray, num_disparities: int) -> np.ndarray:
-    normalized = np.clip(disparity / float(num_disparities), 0.0, 1.0)
-    preview = cv2.applyColorMap(
-        (normalized * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO
+def _depth_heatmap(
+    points_3d: np.ndarray,
+    disparity: np.ndarray,
+    min_distance_m: float,
+    max_distance_m: float,
+) -> np.ndarray:
+    """Create a metric Z-depth heatmap where red is near and blue is far."""
+    depth = points_3d[:, :, 2]
+    valid = (
+        np.isfinite(depth)
+        & (disparity > 0.5)
+        & (depth >= min_distance_m)
+        & (depth <= max_distance_m)
     )
-    preview[disparity <= 0.5] = (20, 20, 20)
+    normalized = np.zeros(depth.shape, dtype=np.float32)
+    normalized[valid] = 1.0 - (
+        (depth[valid] - min_distance_m) / (max_distance_m - min_distance_m)
+    )
+    preview = cv2.applyColorMap(
+        np.clip(normalized * 255.0, 0, 255).astype(np.uint8), cv2.COLORMAP_TURBO
+    )
+    preview[~valid] = (20, 20, 20)
+    cv2.putText(
+        preview,
+        f"Depth: red=near ({min_distance_m:.2f}m), blue=far ({max_distance_m:.0f}m)",
+        (10, 22),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
     return preview
 
 
@@ -207,11 +230,17 @@ class RobotStereoDetectionService:
     def __init__(self, *, enable_object_detection: bool = True) -> None:
         self.enable_object_detection = enable_object_detection
         self.source_dir = Path(os.getenv("R1_STEREO_SOURCE_DIR", str(REFERENCE_DIR)))
+        new_calibration = Path(
+            "/home/daikai/unitree_sdk2_python/my_script/"
+            "r1_yolo_world_stereo/r1_stereo_calibration.new.npz"
+        )
+        default_calibration = (
+            new_calibration
+            if new_calibration.is_file()
+            else self.source_dir / "r1_stereo_calibration.npz"
+        )
         self.calibration_path = Path(
-            os.getenv(
-                "R1_STEREO_CALIBRATION",
-                str(self.source_dir / "r1_stereo_calibration.npz"),
-            )
+            os.getenv("R1_STEREO_CALIBRATION", str(default_calibration))
         )
         self.model_path = Path(
             os.getenv(
@@ -247,11 +276,13 @@ class RobotStereoDetectionService:
         # Keep the corridor away from the less reliable left/right overlap
         # boundaries of the stereo pair. It remains centered on the robot's
         # forward travel direction.
+        center_x = (self.width - min(self.width, CENTER_CLEARANCE_WIDTH)) // 2
+        center_y = (self.height - min(self.height, CENTER_CLEARANCE_HEIGHT)) // 2
         self.obstacle_region = (
-            CENTER_CLEARANCE_X / self.width,
-            CENTER_CLEARANCE_Y / self.height,
-            (CENTER_CLEARANCE_X + CENTER_CLEARANCE_WIDTH) / self.width,
-            (CENTER_CLEARANCE_Y + CENTER_CLEARANCE_HEIGHT) / self.height,
+            center_x / self.width,
+            center_y / self.height,
+            (center_x + min(self.width, CENTER_CLEARANCE_WIDTH)) / self.width,
+            (center_y + min(self.height, CENTER_CLEARANCE_HEIGHT)) / self.height,
         )
         self.obstacle_percentile = min(
             50.0, _env_float("R1_STEREO_OBSTACLE_PERCENTILE", 10.0)
@@ -265,7 +296,12 @@ class RobotStereoDetectionService:
         self._depth_consumers: set[str] = set()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._frames: dict[str, bytes | None] = {"detection": None, "depth": None}
+        self._frames: dict[str, bytes | None] = {
+            "detection": None,
+            "left": None,
+            "right": None,
+            "depth": None,
+        }
         self._sequence = 0
         self._state = "stopped"
         self._error: str | None = None
@@ -280,15 +316,13 @@ class RobotStereoDetectionService:
 
     def _configuration_error(self, view: str | None = None) -> str | None:
         if (
-            CENTER_CLEARANCE_X < 0
-            or CENTER_CLEARANCE_Y < 0
-            or CENTER_CLEARANCE_WIDTH < 1
+            CENTER_CLEARANCE_WIDTH < 1
             or CENTER_CLEARANCE_HEIGHT < 1
-            or CENTER_CLEARANCE_X + CENTER_CLEARANCE_WIDTH > self.width
-            or CENTER_CLEARANCE_Y + CENTER_CLEARANCE_HEIGHT > self.height
+            or CENTER_CLEARANCE_WIDTH > self.width
+            or CENTER_CLEARANCE_HEIGHT > self.height
         ):
             return (
-                "CENTER_CLEARANCE_X/Y/WIDTH/HEIGHT must define a positive region "
+                "CENTER_CLEARANCE_WIDTH/HEIGHT must define a positive region "
                 f"inside the {self.width}x{self.height} stereo frame."
             )
         common_path = self.source_dir / "r1_stereo_common.py"
@@ -305,10 +339,13 @@ class RobotStereoDetectionService:
 
     def start(self, view: str | None = None, *, visible: bool = True) -> None:
         with self._condition:
-            if view not in (None, "detection", "depth"):
+            if view not in (None, "detection", "left", "right", "depth"):
                 raise RobotStereoError(f"Unknown stereo view: {view}")
             if visible:
-                self._active_views.update(("detection", "depth") if view is None else (view,))
+                if view == "depth":
+                    self._active_views.update(("left", "depth"))
+                else:
+                    self._active_views.update(("detection", "depth") if view is None else (view,))
             if self._thread is not None and self._thread.is_alive():
                 self._condition.notify_all()
                 return
@@ -317,7 +354,12 @@ class RobotStereoDetectionService:
                 self._state = "error"
                 self._error = error
                 raise RobotStereoError(error)
-            self._frames = {"detection": None, "depth": None}
+            self._frames = {
+                "detection": None,
+                "left": None,
+                "right": None,
+                "depth": None,
+            }
             self._detections = []
             self._last_frame_at = None
             self._fps = self._stereo_ms = self._yolo_ms = self._pair_delta_ms = 0.0
@@ -334,8 +376,10 @@ class RobotStereoDetectionService:
     def stop(self, view: str | None = None) -> None:
         with self._condition:
             if view is not None:
-                self._active_views.discard(view)
-                self._frames[view] = None
+                stopped_views = ("left", "right", "depth") if view == "depth" else (view,)
+                for stopped_view in stopped_views:
+                    self._active_views.discard(stopped_view)
+                    self._frames[stopped_view] = None
                 if self._active_views:
                     self._condition.notify_all()
                     return
@@ -608,7 +652,12 @@ class RobotStereoDetectionService:
                 instant_fps = 1.0 / max(now - previous_time, 1e-6)
                 fps = instant_fps if self._fps == 0.0 else 0.9 * self._fps + 0.1 * instant_fps
                 previous_time = now
-                depth_view = _disparity_preview(disparity, self.num_disparities)
+                depth_view = _depth_heatmap(
+                    points_3d,
+                    disparity,
+                    self.min_distance_m,
+                    self.max_distance_m,
+                )
                 region_left, region_top, region_right, region_bottom = self.obstacle_region
                 region_x1 = int(depth_view.shape[1] * region_left)
                 region_y1 = int(depth_view.shape[0] * region_top)
@@ -636,18 +685,65 @@ class RobotStereoDetectionService:
                     2,
                     cv2.LINE_AA,
                 )
+                camera_color = (
+                    (0, 255, 255) if obstacle_distance is not None else (0, 0, 255)
+                )
+                left_view = left_rectified.copy()
+                right_view = right_rectified.copy()
+                for camera_view in (left_view, right_view):
+                    cv2.rectangle(
+                        camera_view,
+                        (region_x1, region_y1),
+                        (region_x2, region_y2),
+                        camera_color,
+                        2,
+                    )
+                cv2.putText(
+                    left_view,
+                    obstacle_text,
+                    (10, 27),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    camera_color,
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    right_view,
+                    f"PAIR DELTA: {pair_delta_ms:.1f} ms",
+                    (10, 27),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    camera_color,
+                    2,
+                    cv2.LINE_AA,
+                )
                 ok_detection, detection_jpeg = cv2.imencode(
                     ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 82]
                 )
+                ok_left, left_jpeg = cv2.imencode(
+                    ".jpg", left_view, [cv2.IMWRITE_JPEG_QUALITY, 82]
+                )
+                right_jpeg = None
+                ok_right = True
+                if "right" in self._active_views:
+                    ok_right, right_jpeg = cv2.imencode(
+                        ".jpg", right_view, [cv2.IMWRITE_JPEG_QUALITY, 82]
+                    )
                 ok_depth, depth_jpeg = cv2.imencode(
                     ".jpg", depth_view, [cv2.IMWRITE_JPEG_QUALITY, 82]
                 )
-                if not ok_detection or not ok_depth:
+                if not all((ok_detection, ok_left, ok_right, ok_depth)):
                     raise RobotStereoError("Could not encode stereo output frames.")
 
                 with self._condition:
                     if "detection" in self._active_views:
                         self._frames["detection"] = detection_jpeg.tobytes()
+                    if "left" in self._active_views:
+                        self._frames["left"] = left_jpeg.tobytes()
+                    if "right" in self._active_views:
+                        assert right_jpeg is not None
+                        self._frames["right"] = right_jpeg.tobytes()
                     if "depth" in self._active_views:
                         self._frames["depth"] = depth_jpeg.tobytes()
                     self._sequence += 1
@@ -690,6 +786,8 @@ class RobotStereoDetectionService:
                 "running": self._thread is not None and self._thread.is_alive(),
                 "views": {
                     "detection": "detection" in self._active_views,
+                    "left": "left" in self._active_views,
+                    "right": "right" in self._active_views,
                     "depth": "depth" in self._active_views,
                 },
                 "connected": self._state == "connected" and not self._stop_event.is_set(),
@@ -705,6 +803,7 @@ class RobotStereoDetectionService:
                 "yolo_ms": round(self._yolo_ms, 1),
                 "pair_delta_ms": round(self._pair_delta_ms, 1),
                 "baseline_m": self._baseline_m,
+                "calibration_path": str(self.calibration_path),
                 "obstacle_distance_m": self._obstacle_distance_m,
                 "obstacle_region": self.obstacle_region,
                 "obstacle_percentile": self.obstacle_percentile,

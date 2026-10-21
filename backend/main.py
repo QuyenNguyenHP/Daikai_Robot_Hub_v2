@@ -604,7 +604,7 @@ def start_robot_stereo(request: Request) -> dict[str, object]:
 @app.post("/api/robot/stereo/start/{view}")
 def start_robot_stereo_view(
     request: Request,
-    view: Literal["detection", "depth"],
+    view: Literal["detection", "left", "right", "depth"],
 ) -> dict[str, object]:
     detector = robot_stereo_detection(request)
     try:
@@ -627,7 +627,7 @@ def stop_robot_stereo(request: Request) -> dict[str, object]:
 @app.post("/api/robot/stereo/stop/{view}")
 def stop_robot_stereo_view(
     request: Request,
-    view: Literal["detection", "depth"],
+    view: Literal["detection", "left", "right", "depth"],
 ) -> dict[str, object]:
     detector = robot_stereo_detection(request)
     detector.stop(view)
@@ -650,7 +650,7 @@ def set_robot_stereo_classes(
 @app.get("/api/robot/stereo/stream/{view}")
 def robot_stereo_stream(
     request: Request,
-    view: Literal["detection", "depth"],
+    view: Literal["detection", "left", "right", "depth"],
 ) -> StreamingResponse:
     detector = robot_stereo_detection(request)
     return StreamingResponse(
