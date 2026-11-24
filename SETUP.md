@@ -322,14 +322,28 @@ Nếu gặp `invalid command 'bdist_wheel'`, chạy lại lệnh cài pip/setupt
 Không cần clone lại. Cảnh báo thiếu NVJPEG hoặc video codec support không phải
 nguyên nhân của lỗi `bdist_wheel`. Nếu hết RAM khi build, giảm `MAX_JOBS=1`.
 
-### 4. Cài profile và chuẩn bị checkpoint
+### 4. Cài profile, kiểm tra GPU và Python 3.8
+
+Sau khi torchvision build thành công, giữ `(.venv)` đang bật và chạy lần lượt:
 
 ```bash
 cd ~/Daikai_Robot_Hub_v2
 export PIP_CONSTRAINT="$PWD/deploy/jetpack5/constraints.txt"
 python -m pip install -r deploy/jetpack5/requirements.txt
 python -m pip check
+python deploy/jetpack5/check_gpu.py
+python -m unittest discover -s tests -p 'test_python38_deployment.py'
 ```
+
+`pip check` kiểm tra xung đột dependency; `check_gpu.py` kiểm tra CUDA NMS,
+YOLO-World custom prompt và FastAPI; unittest kiểm tra tương thích Python 3.8
+và cách nạp CLIP. Các kiểm tra này không điều khiển robot. Dừng nếu có lỗi.
+Lần kiểm tra model đầu tiên cần internet nếu chưa có CLIP cache.
+
+Nếu unittest báo annotation `dict[...]` trong backend chưa tương thích, đồng bộ
+code đã sửa từ GitHub sang Jetson rồi chạy lại test; không cần build lại
+torchvision chỉ vì lỗi annotation. Nếu có thay đổi code cục bộ, lưu lại trước
+khi cập nhật bằng `git pull`.
 
 Giữ constraints khi cài thêm package trong profile này. Các file cần có dưới
 `backend/r1_yolo_world_stereo/`:
@@ -345,13 +359,10 @@ custom prompt khi có internet để tải trước khi đưa Jetson offline. N�
 đổi checkpoint YOLO, cần kiểm tra cấu hình model và tính tương thích riêng;
 chỉ đổi tên file không đảm bảo hoạt động.
 
-### 5. Kiểm tra và khởi động
+### 5. Khởi động sau khi các kiểm tra thành công
 
 ```bash
 cd ~/Daikai_Robot_Hub_v2
-python deploy/jetpack5/check_gpu.py
-python -m unittest discover -s tests -p 'test_python38_deployment.py'
-
 export CYCLONEDDS_HOME="$HOME/cyclonedds/install"
 export CMAKE_PREFIX_PATH="$CYCLONEDDS_HOME${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -360,7 +371,6 @@ R1_YOLO_DEVICE=cuda:0 python backend eth10 --port 8010
 
 SDK phải được cài trong cùng venv theo phần Unitree phía trên. Thay `eth10`
 bằng interface nối robot thực tế. Port `8010` khớp proxy của frontend hiện tại.
-GPU check kiểm tra CUDA NMS, YOLO-World và FastAPI, không điều khiển robot.
 Sau khi kiểm tra thành công, mở frontend và bật stereo để kiểm tra ảnh và khoảng cách.
 
 ### Phân biệt lỗi mạng với lỗi cài package
@@ -384,3 +394,172 @@ ip neigh show dev eth10
 cat /sys/class/net/eth10/carrier
 curl --max-time 15 -i http://127.0.0.1:8010/api/robot/services
 ```
+
+## XR teleoperation: môi trường riêng cho `robot_teleoperation.py`
+
+`backend/robot_teleoperation.py` là bộ quản lý subprocess được backend gọi qua
+web, không phải script chạy độc lập bằng `python backend/robot_teleoperation.py`.
+Nó chạy bản tùy chỉnh `reference_script/teleop_hand_and_arm.py` của dự án,
+nhưng vẫn cần modules và robot assets từ repo Unitree `xr_teleoperate`.
+
+### Những thành phần bắt buộc
+
+| Thành phần | Mục đích |
+| --- | --- |
+| Miniconda Linux aarch64 tại `/home/unitree/miniconda3` | Cung cấp môi trường XR độc lập trên Jetson ARM64. |
+| Conda environment `tv`, Python 3.10 | Runtime cho XR; không thay `.venv` Python 3.8 đang dùng stereo. |
+| `xr_teleoperate` và submodules | Controller R1, inverse kinematics, URDF/mesh assets, IPC và XR transport. |
+| Pinocchio 3.1.0 | Tính động học robot / inverse kinematics. |
+| `televuer` và HTTPS certificate | Nhận pose tay/controller từ kính XR qua kết nối bảo mật. |
+| `teleimager`, `libjpeg-turbo` | Thư viện camera XR; bản script đã sửa chỉ import API camera cũ khi bật image server. |
+| Unitree SDK2 + Cyclone DDS trong `tv` | Gửi lệnh robot từ subprocess; bản cài trong `.venv` không tự xuất hiện trong Conda. |
+| `pyzmq` ở backend và `tv` | Kết nối nút Start/Stop trên web với tiến trình XR qua IPC. |
+| Kính XR hỗ trợ và kết nối mạng tới Jetson | Nguồn dữ liệu hand/controller tracking; trang web Robot Hub không tự tạo pose XR. |
+
+Hướng dẫn nguồn: [Unitree xr_teleoperate](https://github.com/unitreerobotics/xr_teleoperate#1--installation).
+Profile này chưa được xác minh trên phần cứng từ workspace này. Dùng revision
+có các controller `R1_A5`/`R1_A7` và giữ submodules đúng commit của revision đó.
+
+### 1. Chuẩn bị Conda và source
+
+Nếu chưa có Miniconda, cài bản **Linux aarch64** theo
+[hướng dẫn Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install)
+vào `/home/unitree/miniconda3`. Không tải installer Linux x86_64 cho Jetson.
+Mở terminal riêng để cài XR, không cài các package này vào `.venv` stereo:
+
+```bash
+source /home/unitree/miniconda3/etc/profile.d/conda.sh
+# Chỉ tạo khi chưa có environment tv:
+conda create -n tv python=3.10 pinocchio=3.1.0 numpy=1.26.4 -c conda-forge
+conda activate tv
+# Không mang constraints torch/Python 3.8 sang environment XR:
+unset PIP_CONSTRAINT
+cd /home/unitree
+git clone https://github.com/unitreerobotics/xr_teleoperate.git
+cd xr_teleoperate
+git submodule update --init --recursive
+```
+
+Nếu đã có source/environment hoạt động, giữ lại và kiểm tra thay vì tạo đè.
+Không chạy freeze/requirements của stereo trong environment `tv`.
+
+### 2. Cài submodules và SDK trong `tv`
+
+Trước hết cài requirements của repo XR, không chỉ requirements của Robot Hub.
+File này chứa `matplotlib`, `meshcat`, `sshkeyboard` và `rerun-sdk` theo phiên
+bản của checkout. Module lọc import matplotlib ngay khi nạp; module IK import
+meshcat dù không bật visualization. CasADi và binding Pinocchio/CasADi phục vụ
+bài toán inverse kinematics. Không dùng `pip install pinocchio` để thay bản
+Pinocchio đã cài bằng conda-forge.
+
+```bash
+conda activate tv
+unset PIP_CONSTRAINT
+conda install -c conda-forge 'python=3.10' 'pinocchio=3.1.0' 'numpy=1.26.4' casadi libjpeg-turbo
+cd /home/unitree/xr_teleoperate
+python -m pip install -r requirements.txt
+python -m pip install logging_mp pyzmq pyyaml aiohttp aiohttp-cors 'params-proto==2.13.2'
+```
+
+Với Vuer 0.0.60, pin `params-proto==2.13.2` cung cấp API `Flag`, `PrefixProto`
+và `Proto`. Thông báo Vuer thiếu aiohttp là thông báo chung bắt mọi ImportError,
+nên có thể che lỗi phiên bản params-proto. `pip check` không phát hiện được
+mọi lỗi import/API. Nếu dùng revision XR/Vuer khác, xác minh pin lại thay vì
+nâng toàn bộ package một cách tự động.
+
+```bash
+conda install -c conda-forge libjpeg-turbo
+cd /home/unitree/xr_teleoperate/teleop/teleimager
+python -m pip install -e .
+cd /home/unitree/xr_teleoperate/teleop/televuer
+python -m pip install -e .
+
+export CYCLONEDDS_HOME="$HOME/cyclonedds/install"
+export CMAKE_PREFIX_PATH="$CYCLONEDDS_HOME${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+python -m pip install -e /home/unitree/unitree_sdk2_python
+python -m pip check
+```
+
+Cài các dependency còn lại theo README/metadata của revision XR đã checkout.
+Theo README upstream được kiểm tra khi viết phần này, teleimager được pin ở
+v2.0.8; không tự nâng lên 2.1.x vì có thay đổi API không tương thích.
+
+### 3. HTTPS cho kính XR
+
+Với PICO/Quest, nếu chưa có certificate, tạo trong thư mục mới để không ghi đè
+certificate đang dùng:
+
+```bash
+xr_cert_dir=$(mktemp -d "$HOME/xr-certs.XXXXXX")
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout "$xr_cert_dir/key.pem" -out "$xr_cert_dir/cert.pem"
+export XR_TELEOP_CERT="$xr_cert_dir/cert.pem"
+export XR_TELEOP_KEY="$xr_cert_dir/key.pem"
+```
+
+Cho backend kế thừa hai biến certificate khi khởi động, hoặc cấu hình certificate
+ở `~/.config/xr_teleoperate/` theo README upstream. Với Apple Vision Pro, dùng
+quy trình root CA và SAN chứa IP host trong README upstream, không dùng nguyên
+quy trình PICO/Quest ở trên. Kính phải truy cập được HTTPS/WebSocket port `8012`
+của máy chạy XR. Launcher hiện dùng pass-through, không cần chạy image server,
+bản script đã sửa không import ImageClient cũ trong chế độ này.
+
+### 4. Kiểm tra trước khi bật từ web
+
+Các đường dẫn sau đang hard-code trong `backend/robot_teleoperation.py`:
+
+- Conda: `/home/unitree/miniconda3/etc/profile.d/conda.sh`.
+- Working directory: `/home/unitree/xr_teleoperate/teleop`.
+- Environment: `tv`; robot arm: `R1_A5`; interface: `eth10`.
+- Tần số điều khiển: 30 Hz; input: hand hoặc controller; bật `--motion --ipc`.
+
+Tần số 30 Hz này là vòng điều khiển XR, không phải FPS YOLO/stereo. Nếu robot
+là R1_A7 hoặc interface khác, phải sửa launcher trước khi chạy; tham số interface
+của backend không tự thay `eth10` hard-code của XR launcher.
+
+Kiểm tra toàn bộ import, chưa chạy khối main khởi tạo controller robot:
+
+```bash
+source /home/unitree/miniconda3/etc/profile.d/conda.sh
+conda activate tv
+cd /home/unitree/xr_teleoperate/teleop
+python - <<'PY'
+import runpy
+from params_proto import Flag, PrefixProto, Proto
+from vuer.server import Vuer, VuerSession
+import casadi
+from pinocchio import casadi as cpin
+runpy.run_path(
+    '/home/unitree/Daikai_Robot_Hub_v2/reference_script/teleop_hand_and_arm.py',
+    run_name='teleop_import_check',
+)
+print('Teleoperation imports OK')
+PY
+python -m pip check
+```
+
+Vuer có thể bắt `--help` ngay lúc import, in help riêng rồi thoát trước các
+import phía sau. Vì vậy dùng phép kiểm tra `runpy` ở trên thay vì coi `--help`
+là bằng chứng đã đủ dependency. Nếu báo thiếu module hoặc controller, sửa
+environment/revision XR đó trước. Phép kiểm tra import chưa đảm bảo toàn bộ
+assets và kết nối runtime. Các dependency của end effector tùy chọn (Dex/Inspire/
+BrainCo) hoặc recording cần cài thêm theo revision upstream nếu bật các chế độ
+đó; launcher hiện không truyền `--ee` hoặc `--record`.
+Sau đó chạy backend trong `.venv` Python 3.8 như bình thường với các biến DDS và
+certificate, dùng bảng Teleoperation trên web để launch và bắt đầu tracking.
+Không chạy thêm một instance điều khiển XR song song.
+
+
+### Sửa lỗi `No module named teleimager.image_client`
+
+Teleimager 2.0.8 cung cấp `teleimager.client.TeleImageClient`, không cung cấp
+API cũ `teleimager.image_client.ImageClient`. Cài lại cùng phiên bản không sửa
+được khác biệt API này; không đổi tên import thành alias vì constructor và các
+phương thức lấy ảnh cũng khác nhau.
+
+Đồng bộ bản sửa `reference_script/teleop_hand_and_arm.py` từ repository sang
+Jetson. Bản sửa chỉ import ImageClient cũ trong nhánh dùng image server, nên
+launcher web với `--no-image-server --display-mode=pass-through` không bị chặn.
+Chạy lại phép kiểm tra `runpy` ở trên sau khi đồng bộ. Chế độ image server cũ
+chưa được chuyển sang TeleImageClient 2.x và sẽ báo lỗi rõ ràng nếu sử dụng.

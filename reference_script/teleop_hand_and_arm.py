@@ -26,7 +26,6 @@ from unitree_sdk2py.core.channel import ChannelFactoryInitialize # dds
 from televuer import TeleVuerWrapper
 from teleop.robot_control.robot_arm import G1_29_ArmController, G1_29_Arm_Internal_Dex1_Controller, G1_23_ArmController, H1_2_ArmController, H1_ArmController, H2_ArmController, R1_A5_ArmController, R1_A7_ArmController
 from teleop.robot_control.robot_arm_ik import G1_29_ArmIK, G1_23_ArmIK, H1_2_ArmIK, H1_ArmIK, H2_ArmIK, R1_A5_ArmIK, R1_A7_ArmIK
-from teleimager.image_client import ImageClient
 from teleop.utils.ipc import IPC_Server
 from teleop.utils.motion_switcher import MotionSwitcher, LocoClientWrapper
 from sshkeyboard import listen_keyboard, stop_listening
@@ -151,6 +150,17 @@ if __name__ == '__main__':
             xr_need_local_img = False
             logger_mp.info("Camera transport disabled; using headset pass-through mode.")
         else:
+            # The legacy image-server API is not provided by teleimager 2.0.8.
+            # Pass-through without an image server does not need this import.
+            try:
+                from teleimager.image_client import ImageClient
+            except ImportError as exc:
+                raise RuntimeError(
+                    'Image-server mode requires the legacy teleimager ImageClient API. '
+                    'For the Robot Hub launcher use --no-image-server '
+                    '--display-mode=pass-through; TeleImageClient 2.x is not '
+                    'a drop-in replacement for ImageClient.'
+                ) from exc
             img_client = ImageClient(host=args.img_server_ip, request_bgr=True)
             camera_config = img_client.get_cam_config()
             logger_mp.debug(f"Camera config: {camera_config}")
