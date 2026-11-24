@@ -29,6 +29,7 @@ class RobotTeleoperationService:
     """Start one configured teleoperation process and expose its status."""
 
     CONDA_SETUP = "/home/unitree/miniconda3/etc/profile.d/conda.sh"
+    XR_PYTHON = "/home/unitree/miniconda3/envs/tv/bin/python"
     WORKING_DIRECTORY = "/home/unitree/xr_teleoperate/teleop"
     SCRIPT = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -122,6 +123,10 @@ class RobotTeleoperationService:
                 raise TeleoperationError(
                     f"Teleoperation directory was not found: {self.WORKING_DIRECTORY}"
                 )
+            if not os.path.isfile(self.XR_PYTHON):
+                raise TeleoperationError(
+                    f"XR Python was not found: {self.XR_PYTHON}. Create Conda environment tv first."
+                )
             if not os.path.isfile(self.SCRIPT):
                 raise TeleoperationError(
                     f"Project teleoperation script was not found: {self.SCRIPT}"
@@ -129,7 +134,7 @@ class RobotTeleoperationService:
 
             command = (
                 f"source {self.CONDA_SETUP} && conda activate tv && "
-                f"exec python {shlex.quote(self.SCRIPT)} "
+                f"exec {shlex.quote(self.XR_PYTHON)} {shlex.quote(self.SCRIPT)} "
                 "--frequency=30 "
                 f"--input-mode={input_mode} "
                 "--display-mode=pass-through "

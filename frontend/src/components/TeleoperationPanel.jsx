@@ -25,6 +25,9 @@ export function TeleoperationPanel() {
       const result = await getTeleoperationStatus()
       if (mounted.current) {
         setStatus(result)
+        if (!result.running) {
+          setNotification((current) => current?.type === 'started' ? null : current)
+        }
         setError('')
       }
     } catch (requestError) {
@@ -92,7 +95,7 @@ export function TeleoperationPanel() {
       setStatus(result)
       setNotification({
         type: 'started',
-        message: 'XR server launched. Connect Quest 3, then press Start robot tracking.',
+        message: 'XR process launched. Check the log for startup errors before connecting Quest 3.',
       })
     } catch (requestError) {
       setError(requestError.message)
@@ -195,7 +198,7 @@ export function TeleoperationPanel() {
       {notification && (
         <div className={`teleoperation-notification ${notification.type}`} role="status">
           <div>
-            <strong>{notification.type === 'started' ? 'Quest 3 ready' : 'Session ended'}</strong>
+            <strong>{notification.type === 'started' ? 'XR session update' : 'Session ended'}</strong>
             <span>{notification.message}</span>
           </div>
           <button type="button" aria-label="Dismiss notification" onClick={() => setNotification(null)}>×</button>
