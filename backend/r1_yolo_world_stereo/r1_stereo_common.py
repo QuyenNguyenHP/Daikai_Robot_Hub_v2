@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import threading
 import time
 import subprocess
@@ -253,7 +254,7 @@ class StereoGeometry:
 
     REQUIRED_KEYS = ("K1", "D1", "K2", "D2", "R", "T", "image_size")
 
-    def __init__(self, calibration_path: str | Path):
+    def __init__(self, calibration_path: _typing38.Union[str, Path]):
         calibration_path = Path(calibration_path)
         if not calibration_path.is_file():
             raise FileNotFoundError(f"Calibration file not found: {calibration_path}")

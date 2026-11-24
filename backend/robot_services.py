@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import os
 import threading
 
@@ -23,7 +24,7 @@ class RobotServiceProtectedError(RobotServiceError):
 class RobotServiceManager:
     """Own one RobotStateClient and serialize service list/switch requests."""
 
-    def __init__(self, network_interface: str | None = None) -> None:
+    def __init__(self, network_interface: _typing38.Union[str, None] = None) -> None:
         self.network_interface = (
             network_interface or os.getenv("UNITREE_NETWORK_INTERFACE", "")
         ).strip()
@@ -63,7 +64,7 @@ class RobotServiceManager:
         self._client = client
         return client
 
-    def _normalize(self, services) -> list[dict[str, object]]:
+    def _normalize(self, services) -> _typing38.List[_typing38.Dict[str, object]]:
         normalized = []
         for item in sorted(services, key=lambda value: value.name.lower()):
             try:
@@ -85,7 +86,7 @@ class RobotServiceManager:
             )
         return normalized
 
-    def _service_list(self, client) -> list[dict[str, object]]:
+    def _service_list(self, client) -> _typing38.List[_typing38.Dict[str, object]]:
         try:
             code, services = client.ServiceList()
         except Exception as exc:
@@ -94,7 +95,7 @@ class RobotServiceManager:
             raise RobotServiceError(f"ServiceList failed with code {code}.")
         return self._normalize(services)
 
-    def list(self) -> dict[str, object]:
+    def list(self) -> _typing38.Dict[str, object]:
         if not self._lock.acquire(blocking=False):
             raise RobotServiceBusyError("Another robot service request is in progress.")
         try:
@@ -108,7 +109,7 @@ class RobotServiceManager:
         finally:
             self._lock.release()
 
-    def switch(self, name: str, enabled: bool) -> dict[str, object]:
+    def switch(self, name: str, enabled: bool) -> _typing38.Dict[str, object]:
         if not self._lock.acquire(blocking=False):
             raise RobotServiceBusyError("Another robot service request is in progress.")
         try:

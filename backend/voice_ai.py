@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import base64
 import binascii
 import os
@@ -30,7 +31,7 @@ class VoiceAIClient:
         except ValueError:
             self.timeout_seconds = 180.0
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> _typing38.Dict[str, object]:
         return {
             "configured": bool(self.base_url),
             "server_url": self.base_url or None,
@@ -77,7 +78,7 @@ class VoiceAIClient:
         audio: bytes,
         content_type: str,
         session_id: str,
-    ) -> dict[str, object]:
+    ) -> _typing38.Dict[str, object]:
         if not self.base_url:
             raise VoiceAIError("VOICE_AI_SERVER_URL is not configured.")
         if not audio:

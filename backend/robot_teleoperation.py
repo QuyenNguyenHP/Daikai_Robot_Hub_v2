@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import os
 import signal
 import shlex
@@ -10,7 +11,7 @@ import threading
 import uuid
 from collections import deque
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Dict, Literal, Optional
 
 
 InputMode = Literal["hand", "controller"]
@@ -36,18 +37,18 @@ class RobotTeleoperationService:
     )
 
     def __init__(self) -> None:
-        self._process: subprocess.Popen[str] | None = None
+        self._process: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
-        self._output: deque[str] = deque(maxlen=80)
-        self._started_at: str | None = None
-        self._input_mode: InputMode | None = None
+        self._output: _typing38.Deque[str] = deque(maxlen=80)
+        self._started_at: Optional[str] = None
+        self._input_mode: Optional[InputMode] = None
         self._tracking = False
         self._stopping = False
 
     def _is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> Dict[str, object]:
         with self._lock:
             running = self._is_running()
             return {
@@ -99,14 +100,14 @@ class RobotTeleoperationService:
             socket.close()
             context.term()
 
-    def _read_output(self, process: subprocess.Popen[str]) -> None:
+    def _read_output(self, process: subprocess.Popen) -> None:
         if process.stdout is None:
             return
         for line in process.stdout:
             with self._lock:
                 self._output.append(line.rstrip())
 
-    def start(self, input_mode: InputMode) -> dict[str, object]:
+    def start(self, input_mode: InputMode) -> Dict[str, object]:
         if input_mode not in {"hand", "controller"}:
             raise TeleoperationError("Input mode must be 'hand' or 'controller'.")
 
@@ -167,7 +168,7 @@ class RobotTeleoperationService:
         ).start()
         return self.status()
 
-    def begin_tracking(self) -> dict[str, object]:
+    def begin_tracking(self) -> Dict[str, object]:
         with self._lock:
             if not self._is_running():
                 raise TeleoperationStateError("Launch teleoperation before tracking.")
@@ -180,7 +181,7 @@ class RobotTeleoperationService:
             self._tracking = True
         return self.status()
 
-    def _terminate_if_still_running(self, process: subprocess.Popen[str]) -> None:
+    def _terminate_if_still_running(self, process: subprocess.Popen) -> None:
         try:
             process.wait(timeout=12)
             return
@@ -193,7 +194,7 @@ class RobotTeleoperationService:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
 
-    def stop(self) -> dict[str, object]:
+    def stop(self) -> Dict[str, object]:
         with self._lock:
             if not self._is_running() or self._process is None:
                 raise TeleoperationStateError("Teleoperation is not running.")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 from concurrent.futures import ThreadPoolExecutor
 
 import importlib.util
@@ -95,12 +96,12 @@ def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
 def _object_distance(
     points_3d: np.ndarray,
     disparity: np.ndarray,
-    box: tuple[int, int, int, int],
+    box: _typing38.Tuple[int, int, int, int],
     inner_scale: float,
     min_distance_m: float,
     max_distance_m: float,
     mode: str,
-) -> float | None:
+) -> _typing38.Union[float, None]:
     """Use the robust inner-box median calculation from the reference script."""
     x1, y1, x2, y2 = box
     center_x = (x1 + x2) / 2.0
@@ -171,14 +172,14 @@ def _depth_heatmap(
 def _region_distance(
     points_3d: np.ndarray,
     disparity: np.ndarray,
-    region: tuple[float, float, float, float],
+    region: _typing38.Tuple[float, float, float, float],
     min_distance_m: float,
     max_distance_m: float,
     mode: str,
     percentile: float = 10.0,
     cell_size_px: int = CENTER_CLEARANCE_CELL_SIZE_PX,
     min_valid_ratio: float = CENTER_CLEARANCE_MIN_VALID_RATIO,
-) -> float | None:
+) -> _typing38.Union[float, None]:
     """Return the nearest reliable local surface in the image region."""
     height, width = disparity.shape[:2]
     x1 = max(0, min(width - 1, int(width * region[0])))
@@ -286,11 +287,11 @@ class RobotStereoDetectionService:
         )
 
         self._condition = threading.Condition()
-        self._active_views: set[str] = set()
-        self._depth_consumers: set[str] = set()
+        self._active_views: _typing38.Set[str] = set()
+        self._depth_consumers: _typing38.Set[str] = set()
         self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._frames: dict[str, bytes | None] = {
+        self._thread: _typing38.Union[threading.Thread, None] = None
+        self._frames: _typing38.Dict[str, _typing38.Union[bytes, None]] = {
             "detection": None,
             "left": None,
             "right": None,
@@ -298,17 +299,17 @@ class RobotStereoDetectionService:
         }
         self._sequence = 0
         self._state = "stopped"
-        self._error: str | None = None
-        self._last_frame_at: float | None = None
-        self._detections: list[dict[str, object]] = []
+        self._error: _typing38.Union[str, None] = None
+        self._last_frame_at: _typing38.Union[float, None] = None
+        self._detections: _typing38.List[_typing38.Dict[str, object]] = []
         self._fps = 0.0
         self._stereo_ms = 0.0
         self._yolo_ms = 0.0
         self._pair_delta_ms = 0.0
-        self._baseline_m: float | None = None
-        self._obstacle_distance_m: float | None = None
+        self._baseline_m: _typing38.Union[float, None] = None
+        self._obstacle_distance_m: _typing38.Union[float, None] = None
 
-    def _configuration_error(self, view: str | None = None) -> str | None:
+    def _configuration_error(self, view: _typing38.Union[str, None] = None) -> _typing38.Union[str, None]:
         if (
             CENTER_CLEARANCE_WIDTH < 1
             or CENTER_CLEARANCE_HEIGHT < 1
@@ -331,7 +332,7 @@ class RobotStereoDetectionService:
             return "R1_YOLO_WORLD_CLASSES must contain at least one class."
         return None
 
-    def start(self, view: str | None = None, *, visible: bool = True) -> None:
+    def start(self, view: _typing38.Union[str, None] = None, *, visible: bool = True) -> None:
         with self._condition:
             if view not in (None, "detection", "left", "right", "depth"):
                 raise RobotStereoError(f"Unknown stereo view: {view}")
@@ -367,7 +368,7 @@ class RobotStereoDetectionService:
             )
             self._thread.start()
 
-    def stop(self, view: str | None = None) -> None:
+    def stop(self, view: _typing38.Union[str, None] = None) -> None:
         with self._condition:
             if view is not None:
                 stopped_views = ("left", "right", "depth") if view == "depth" else (view,)
@@ -414,7 +415,7 @@ class RobotStereoDetectionService:
                 self._error = None
             self._condition.notify_all()
 
-    def set_classes(self, prompts: list[str]) -> dict[str, object]:
+    def set_classes(self, prompts: _typing38.List[str]) -> _typing38.Dict[str, object]:
         normalized = []
         seen = set()
         for prompt in prompts:
@@ -542,7 +543,7 @@ class RobotStereoDetectionService:
         depth_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stereo-depth")
         previous_time = time.monotonic()
         frame_index = 0
-        cached_detections: list[tuple[int, int, int, int, str, float]] = []
+        cached_detections: _typing38.List[_typing38.Tuple[int, int, int, int, str, float]] = []
         last_yolo_ms = 0.0
         try:
             while not self._stop_event.is_set():
@@ -762,7 +763,7 @@ class RobotStereoDetectionService:
             depth_worker.shutdown(wait=True)
             capture.stop()
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> _typing38.Dict[str, object]:
         with self._condition:
             configuration_view = "detection" if "detection" in self._active_views else "depth"
             age = (

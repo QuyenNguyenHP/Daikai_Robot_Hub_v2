@@ -8,7 +8,7 @@ import signal
 import subprocess
 import threading
 from collections import deque
-from collections.abc import Iterator
+from typing import Deque, Dict, Iterator, Optional
 
 
 class VideoStreamingError(RuntimeError):
@@ -23,15 +23,15 @@ class VideoStreamingService:
     """Own one RTP-to-MJPEG subprocess for the web console."""
 
     def __init__(self) -> None:
-        self._process: subprocess.Popen[bytes] | None = None
-        self._output: deque[str] = deque(maxlen=40)
+        self._process: Optional[subprocess.Popen] = None
+        self._output: Deque[str] = deque(maxlen=40)
         self._lock = threading.Lock()
         self._stream_connected = False
 
     def _is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> Dict[str, object]:
         with self._lock:
             running = self._is_running()
             return {
@@ -43,14 +43,14 @@ class VideoStreamingService:
                 "output": list(self._output),
             }
 
-    def _read_output(self, process: subprocess.Popen[bytes]) -> None:
+    def _read_output(self, process: subprocess.Popen) -> None:
         if process.stderr is None:
             return
         for line in process.stderr:
             with self._lock:
                 self._output.append(line.decode(errors="replace").rstrip())
 
-    def start(self) -> dict[str, object]:
+    def start(self) -> Dict[str, object]:
         with self._lock:
             if self._is_running():
                 raise VideoStreamingStateError("Video viewer is already running.")
@@ -105,7 +105,7 @@ class VideoStreamingService:
             with self._lock:
                 self._stream_connected = False
 
-    def stop(self) -> dict[str, object]:
+    def stop(self) -> Dict[str, object]:
         with self._lock:
             if not self._is_running() or self._process is None:
                 raise VideoStreamingStateError("Video viewer is not running.")

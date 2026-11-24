@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import os
 import audioop
 import io
@@ -34,18 +35,18 @@ class RobotAudioBusyError(RobotAudioError):
 
 
 class RobotAudioService:
-    def __init__(self, network_interface: str | None = None) -> None:
+    def __init__(self, network_interface: _typing38.Union[str, None] = None) -> None:
         self.network_interface = (
             network_interface or os.getenv("UNITREE_NETWORK_INTERFACE", "")
         ).strip()
         self._lock = threading.Lock()
         self._client = None
         self._speaker_id = self._read_speaker_id()
-        self._led_rgb: tuple[int, int, int] | None = None
+        self._led_rgb: _typing38.Union[_typing38.Tuple[int, int, int], None] = None
         self._led_state_lock = threading.Lock()
         self._led_keep_on = False
         self._led_stop_event = threading.Event()
-        self._led_thread: threading.Thread | None = None
+        self._led_thread: _typing38.Union[threading.Thread, None] = None
         try:
             interval = float(os.getenv("ROBOT_LED_KEEPALIVE_SECONDS", "0.5"))
         except ValueError:
@@ -60,7 +61,7 @@ class RobotAudioService:
             return 1
         return speaker_id if 0 <= speaker_id <= 4 else 1
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> _typing38.Dict[str, object]:
         return {
             "configured": bool(self.network_interface),
             "available": bool(self.network_interface),
@@ -145,7 +146,7 @@ class RobotAudioService:
         green: int,
         blue: int,
         keep_on: bool = False,
-    ) -> dict[str, object]:
+    ) -> _typing38.Dict[str, object]:
         rgb = (red, green, blue)
         if any(isinstance(value, bool) or not 0 <= value <= 255 for value in rgb):
             raise RobotAudioError("LED RGB values must be integers from 0 to 255.")
@@ -181,8 +182,8 @@ class RobotAudioService:
     def speak(
         self,
         text: str,
-        speaker_id: int | None = None,
-    ) -> dict[str, object]:
+        speaker_id: _typing38.Union[int, None] = None,
+    ) -> _typing38.Dict[str, object]:
         normalized = self._validate(text)
         selected_speaker_id = self._speaker_id if speaker_id is None else speaker_id
         if isinstance(selected_speaker_id, bool) or not 0 <= selected_speaker_id <= 4:
@@ -211,7 +212,7 @@ class RobotAudioService:
             self._lock.release()
 
     @staticmethod
-    def _wav_to_robot_pcm(wav_data: bytes) -> tuple[bytes, float]:
+    def _wav_to_robot_pcm(wav_data: bytes) -> _typing38.Tuple[bytes, float]:
         try:
             with wave.open(io.BytesIO(wav_data), "rb") as wav_file:
                 channels = wav_file.getnchannels()
@@ -238,7 +239,7 @@ class RobotAudioService:
         )
         return pcm, duration
 
-    def speak_english(self, text: str) -> dict[str, object]:
+    def speak_english(self, text: str) -> _typing38.Dict[str, object]:
         normalized = " ".join(text.strip().split())
         if not normalized:
             raise RobotAudioError("Speech text cannot be empty.")
@@ -292,7 +293,7 @@ class RobotAudioService:
 
         return {**playback, "text": normalized, "tts_backend": Path(tts_backend).name}
 
-    def play_wav(self, wav_data: bytes) -> dict[str, object]:
+    def play_wav(self, wav_data: bytes) -> _typing38.Dict[str, object]:
         pcm, duration = self._wav_to_robot_pcm(wav_data)
         if not self.network_interface:
             raise RobotAudioError("UNITREE_NETWORK_INTERFACE is not configured.")

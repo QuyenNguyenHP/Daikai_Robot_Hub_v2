@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import argparse
 from pathlib import Path
 
@@ -37,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def find_corners(gray: np.ndarray, board_size: tuple[int, int]):
+def find_corners(gray: np.ndarray, board_size: _typing38.Tuple[int, int]):
     if hasattr(cv2, "findChessboardCornersSB"):
         found, corners = cv2.findChessboardCornersSB(
             gray,
@@ -66,7 +67,7 @@ def solve_calibration(
     object_points,
     left_points,
     right_points,
-    image_size: tuple[int, int],
+    image_size: _typing38.Tuple[int, int],
     output: Path,
 ) -> None:
     left_rms, K1, D1, _, _ = cv2.calibrateCamera(

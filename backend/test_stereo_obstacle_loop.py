@@ -16,7 +16,7 @@ import signal
 import time
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Dict, Tuple
 
 
 # Allow both ``python backend/test_stereo_obstacle_loop.py`` and ``python -m``.
@@ -125,9 +125,9 @@ def wait_for_fresh_frame(
     detector: RobotStereoDetectionService,
     after_sequence: int,
     timeout_seconds: float,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
-    last_status: dict[str, Any] = {}
+    last_status: Dict[str, Any] = {}
     while time.monotonic() < deadline:
         last_status = detector.status()
         if last_status.get("state") == "error":
@@ -143,8 +143,8 @@ def wait_for_fresh_frame(
 
 
 def choose_action(
-    status: dict[str, Any], threshold_m: float
-) -> tuple[str, str]:
+    status: Dict[str, Any], threshold_m: float
+) -> Tuple[str, str]:
     distance = status.get("obstacle_distance_m")
     if not isinstance(distance, (int, float)) or distance < 0:
         return "turn_right", "no reliable depth in the forward region"

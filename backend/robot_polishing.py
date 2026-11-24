@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import json
 import math
 import threading
@@ -57,15 +58,15 @@ POSE_2_VALUES = (0.375244, POSE_1_VALUES[1], POSE_1_VALUES[2], -0.464781, POSE_1
 POSE_3_VALUES = (-0.618961, POSE_1_VALUES[1], POSE_1_VALUES[2], 0.633055, POSE_1_VALUES[4])
 
 
-def _mirrored_values(values: tuple[float, ...]) -> tuple[float, ...]:
+def _mirrored_values(values: _typing38.Tuple[float, ...]) -> _typing38.Tuple[float, ...]:
     # R1 pitch and elbow use matching bilateral signs. Roll and yaw axes mirror.
     return (values[0], -values[1], -values[2], values[3], -values[4])
 
 
-def _action_poses(arm: ArmSelection) -> tuple[dict[int, float], ...]:
-    poses: list[dict[int, float]] = []
+def _action_poses(arm: ArmSelection) -> _typing38.Tuple[_typing38.Dict[int, float], ...]:
+    poses: _typing38.List[_typing38.Dict[int, float]] = []
     for values in (POSE_1_VALUES, POSE_2_VALUES, POSE_3_VALUES):
-        pose: dict[int, float] = {}
+        pose: _typing38.Dict[int, float] = {}
         if arm in {"right", "both"}:
             pose.update({joint.index: value for joint, value in zip(RIGHT_ARM, values)})
         if arm in {"left", "both"}:
@@ -79,7 +80,7 @@ def _action_poses(arm: ArmSelection) -> tuple[dict[int, float], ...]:
     return tuple(poses)
 
 
-def _fsm_id(client) -> tuple[int, int | None]:
+def _fsm_id(client) -> _typing38.Tuple[int, _typing38.Union[int, None]]:
     code, data = client._Call(ROBOT_API_ID_LOCO_GET_FSM_ID, "{}")
     if code != 0:
         return code, None
@@ -107,8 +108,8 @@ class PolishingController:
         self.state_ready = threading.Event()
         self.lock = threading.Lock()
         self.last_state_time = 0.0
-        self.measured: dict[int, float] = {}
-        self.commanded: dict[int, float] = {}
+        self.measured: _typing38.Dict[int, float] = {}
+        self.commanded: _typing38.Dict[int, float] = {}
         self.weight = 0.0
         self.command = unitree_hg_msg_dds__LowCmd_()
         self.publisher = ChannelPublisher("rt/arm_sdk", LowCmd_)
@@ -160,7 +161,7 @@ class PolishingController:
             time.sleep(max(0.0, next_tick - time.monotonic()))
         return True
 
-    def move_to(self, target: dict[int, float]) -> bool:
+    def move_to(self, target: _typing38.Dict[int, float]) -> bool:
         with self.lock:
             start = {
                 joint.index: self.commanded[joint.index]
@@ -219,7 +220,7 @@ def run_polishing_action(
     arm: ArmSelection = "right",
     speed_deg_s: float = 120.0,
     hold_duration: float = 0.05,
-    stop_event: threading.Event | None = None,
+    stop_event: _typing38.Union[threading.Event, None] = None,
 ) -> int:
     """Run polishing until ``stop_event`` is set, then release ArmSdk control."""
     if arm not in {"left", "right", "both"}:

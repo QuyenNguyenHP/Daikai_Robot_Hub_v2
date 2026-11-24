@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import os
 import threading
 import time
@@ -14,7 +15,7 @@ DEFAULT_TOPIC = "rt/lf/bmsstate"
 GOOD_BALANCE_MV = 30
 
 
-def _nonzero(values: Iterable[int]) -> list[int]:
+def _nonzero(values: Iterable[int]) -> _typing38.List[int]:
     """Remove unused zero-filled entries from Unitree BMS arrays."""
     return [int(value) for value in values if int(value) != 0]
 
@@ -24,22 +25,22 @@ class RobotBatteryService:
 
     def __init__(
         self,
-        network_interface: str | None = None,
-        topic: str | None = None,
+        network_interface: _typing38.Union[str, None] = None,
+        topic: _typing38.Union[str, None] = None,
     ) -> None:
         self.network_interface = (
             network_interface or os.getenv("UNITREE_NETWORK_INTERFACE", "")
         ).strip()
         self.topic = (topic or os.getenv("UNITREE_BATTERY_TOPIC", DEFAULT_TOPIC)).strip()
         self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
+        self._thread: _typing38.Union[threading.Thread, None] = None
         self._stop_event = threading.Event()
         self._subscriber = None
-        self._reading: dict[str, object] | None = None
+        self._reading: _typing38.Union[_typing38.Dict[str, object], None] = None
         self._message_count = 0
-        self._last_update_at: float | None = None
+        self._last_update_at: _typing38.Union[float, None] = None
         self._state = "not_configured" if not self.network_interface else "stopped"
-        self._error: str | None = None
+        self._error: _typing38.Union[str, None] = None
 
     def start(self) -> None:
         with self._lock:
@@ -166,7 +167,7 @@ class RobotBatteryService:
             self._state = "connected"
             self._error = None
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> _typing38.Dict[str, object]:
         with self._lock:
             age = (
                 round(time.time() - self._last_update_at, 3)

@@ -1,6 +1,7 @@
 """In-process autonomous walking using the shared stereo depth pipeline."""
 from __future__ import annotations
 
+import typing as _typing38
 import threading
 import time
 from collections import deque
@@ -25,17 +26,17 @@ class RobotAutoWalkService:
         self.controller = controller
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._events: deque[dict[str, Any]] = deque(maxlen=30)
-        self._event: dict[str, Any] | None = None
-        self._error: str | None = None
+        self._thread: _typing38.Union[threading.Thread, None] = None
+        self._events: _typing38.Deque[_typing38.Dict[str, Any]] = deque(maxlen=30)
+        self._event: _typing38.Union[_typing38.Dict[str, Any], None] = None
+        self._error: _typing38.Union[str, None] = None
         self._settings = self.default_settings()
 
     @staticmethod
-    def default_settings() -> dict[str, int | float]:
+    def default_settings() -> _typing38.Dict[str, _typing38.Union[int, float]]:
         return {"forward_steps": 2, "max_right_turns": 10, "clearance_m": 0.5, "forward_speed_m_s": 0.4, "turn_speed_rad_s": 1.0}
 
-    def status(self) -> dict[str, Any]:
+    def status(self) -> _typing38.Dict[str, Any]:
         with self._lock:
             running = self._thread is not None and self._thread.is_alive()
             return {
@@ -52,7 +53,7 @@ class RobotAutoWalkService:
             self._event = event
             self._events.append(dict(event))
 
-    def start(self, forward_steps: int, max_right_turns: int, clearance_m: float, forward_speed_m_s: float, turn_speed_rad_s: float) -> dict[str, Any]:
+    def start(self, forward_steps: int, max_right_turns: int, clearance_m: float, forward_speed_m_s: float, turn_speed_rad_s: float) -> _typing38.Dict[str, Any]:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise RobotAutoWalkError("Autonomous walking is already running.")
@@ -71,7 +72,7 @@ class RobotAutoWalkService:
             self._thread.start()
         return self.status()
 
-    def _wait_for_frame(self, after_sequence: int, timeout: float = 10.0) -> dict[str, Any]:
+    def _wait_for_frame(self, after_sequence: int, timeout: float = 10.0) -> _typing38.Dict[str, Any]:
         deadline = time.monotonic() + timeout
         while not self._stop_event.is_set() and time.monotonic() < deadline:
             status = self.detector.status()
@@ -87,9 +88,9 @@ class RobotAutoWalkService:
     def _measure_clearance(
         self,
         after_sequence: int,
-    ) -> tuple[float, int]:
+    ) -> _typing38.Tuple[float, int]:
         """Return the median clearance from consecutive fresh stereo frames."""
-        clearances: list[float] = []
+        clearances: _typing38.List[float] = []
         sequence = after_sequence
         for sample_number in range(1, CLEARANCE_SAMPLE_FRAMES + 1):
             status = self._wait_for_frame(sequence)
@@ -165,7 +166,7 @@ class RobotAutoWalkService:
                     pass
             self.detector.release_depth_consumer("autonomous_walk")
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self) -> _typing38.Dict[str, Any]:
         self._stop_event.set()
         thread = self._thread
         if thread is not None and thread.is_alive():

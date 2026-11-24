@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import typing as _typing38
 import json
 import math
 import os
@@ -61,7 +62,7 @@ class RobotControlStateError(RobotControlError):
 class RobotControlService:
     """Own one R1 LocoClient and execute short, serialized commands."""
 
-    def __init__(self, network_interface: str | None = None) -> None:
+    def __init__(self, network_interface: _typing38.Union[str, None] = None) -> None:
         self.network_interface = (
             network_interface or os.getenv("UNITREE_NETWORK_INTERFACE", "")
         ).strip()
@@ -69,7 +70,7 @@ class RobotControlService:
         self._state_lock = threading.Lock()
         self._client = None
         self._locomotion_started = False
-        self._last_fsm_id: int | None = None
+        self._last_fsm_id: _typing38.Union[int, None] = None
         try:
             preferred_fsm_id = int(
                 os.getenv("UNITREE_LOCOMOTION_FSM_ID", str(LOCOMOTION_FSM_ID))
@@ -81,19 +82,19 @@ class RobotControlService:
             if preferred_fsm_id in LOCOMOTION_FSM_IDS
             else LOCOMOTION_FSM_ID
         )
-        self._last_action: str | None = None
-        self._last_code: int | None = None
-        self._error: str | None = None
+        self._last_action: _typing38.Union[str, None] = None
+        self._last_code: _typing38.Union[int, None] = None
+        self._error: _typing38.Union[str, None] = None
         self._accept_velocity_code_127 = os.getenv(
             "UNITREE_ACCEPT_VELOCITY_CODE_127", "true"
         ).strip().lower() not in {"0", "false", "no", "off"}
         self._polishing_stop = threading.Event()
-        self._polishing_thread: threading.Thread | None = None
-        self._polishing_arm: str | None = None
-        self._polishing_speed_deg_s: float | None = None
-        self._polishing_hold_seconds: float | None = None
+        self._polishing_thread: _typing38.Union[threading.Thread, None] = None
+        self._polishing_arm: _typing38.Union[str, None] = None
+        self._polishing_speed_deg_s: _typing38.Union[float, None] = None
+        self._polishing_hold_seconds: _typing38.Union[float, None] = None
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> _typing38.Dict[str, object]:
         with self._state_lock:
             payload = {
                 "process_id": os.getpid(),
@@ -190,11 +191,11 @@ class RobotControlService:
 
     def _mode_payload(
         self,
-        fsm_id: int | None,
+        fsm_id: _typing38.Union[int, None],
         *,
         control_busy: bool,
         stale: bool,
-    ) -> dict[str, object]:
+    ) -> _typing38.Dict[str, object]:
         if fsm_id is None:
             fsm_name = "UNKNOWN"
             display = "Mode query pending"
@@ -228,8 +229,8 @@ class RobotControlService:
     def _set_result(
         self,
         action: str,
-        code: int | None = None,
-        error: str | None = None,
+        code: _typing38.Union[int, None] = None,
+        error: _typing38.Union[str, None] = None,
     ) -> None:
         with self._state_lock:
             self._last_action = action
@@ -281,11 +282,11 @@ class RobotControlService:
         arm: str = "right",
         speed_deg_s: float = 120.0,
         hold_seconds: float = 0.05,
-    ) -> dict[str, object]:
+    ) -> _typing38.Dict[str, object]:
         if not self._lock.acquire(blocking=False):
             raise RobotControlBusyError("Another robot control command is running.")
 
-        details: dict[str, object] = {}
+        details: _typing38.Dict[str, object] = {}
         try:
             client = self._client_instance()
 
@@ -422,7 +423,7 @@ class RobotControlService:
         vy: float,
         omega: float,
         duration_seconds: float,
-    ) -> dict[str, object]:
+    ) -> _typing38.Dict[str, object]:
         """Send a bounded custom velocity command, then stop it explicitly."""
         values = (vx, vy, omega, duration_seconds)
         if not all(math.isfinite(value) for value in values):
@@ -458,7 +459,7 @@ class RobotControlService:
             self._lock.release()
         return {"ok": True, "action": "custom_velocity", **self.status()}
 
-    def mode(self) -> dict[str, object]:
+    def mode(self) -> _typing38.Dict[str, object]:
         """Query the robot's registered FSM mode through locomotion API 7001."""
         if not self._lock.acquire(blocking=False):
             # Mode is polled by the UI while long-running robot commands are in

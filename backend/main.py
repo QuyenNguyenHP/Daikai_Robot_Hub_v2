@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import typing as _typing38
 import asyncio
 import os
 import threading
@@ -189,7 +190,7 @@ class TeleoperationStartRequest(BaseModel):
 
 
 @app.get("/api/health")
-def health(request: Request) -> dict[str, object]:
+def health(request: Request) -> _typing38.Dict[str, object]:
     return {
         "status": "ok",
         "robot_battery": robot_battery(request).status(),
@@ -199,7 +200,7 @@ def health(request: Request) -> dict[str, object]:
 
 
 @app.get("/api/robot/battery")
-def robot_battery_status(request: Request) -> dict[str, object]:
+def robot_battery_status(request: Request) -> _typing38.Dict[str, object]:
     return robot_battery(request).status()
 
 
@@ -216,7 +217,7 @@ async def robot_battery_status_websocket(websocket: WebSocket) -> None:
 
 
 @app.get("/api/robot/control/status")
-def robot_control_status(request: Request) -> dict[str, object]:
+def robot_control_status(request: Request) -> _typing38.Dict[str, object]:
     return robot_control(request).status()
 
 
@@ -233,12 +234,12 @@ async def robot_control_status_websocket(websocket: WebSocket) -> None:
 
 
 @app.get("/api/video-stream/status")
-def video_stream_status(request: Request) -> dict[str, object]:
+def video_stream_status(request: Request) -> _typing38.Dict[str, object]:
     return video_streaming(request).status()
 
 
 @app.post("/api/video-stream/start")
-def start_video_stream(request: Request) -> dict[str, object]:
+def start_video_stream(request: Request) -> _typing38.Dict[str, object]:
     try:
         services = robot_services(request).list().get("services", [])
         stereo_service = next(
@@ -289,7 +290,7 @@ def video_stream_feed(request: Request) -> StreamingResponse:
 
 
 @app.post("/api/video-stream/stop")
-def stop_video_stream(request: Request) -> dict[str, object]:
+def stop_video_stream(request: Request) -> _typing38.Dict[str, object]:
     try:
         return video_streaming(request).stop()
     except VideoStreamingStateError as error:
@@ -299,7 +300,7 @@ def stop_video_stream(request: Request) -> dict[str, object]:
 
 
 @app.get("/api/robot/services")
-def list_robot_services(request: Request) -> dict[str, object]:
+def list_robot_services(request: Request) -> _typing38.Dict[str, object]:
     try:
         return robot_services(request).list()
     except RobotServiceBusyError as error:
@@ -312,7 +313,7 @@ def list_robot_services(request: Request) -> dict[str, object]:
 def switch_robot_service(
     request: Request,
     payload: ServiceSwitchRequest,
-) -> dict[str, object]:
+) -> _typing38.Dict[str, object]:
     try:
         return robot_services(request).switch(payload.name, payload.enabled)
     except (RobotServiceBusyError, RobotServiceProtectedError) as error:
@@ -322,14 +323,14 @@ def switch_robot_service(
 
 
 @app.get("/api/robot/teleoperation/status")
-def teleoperation_status(request: Request) -> dict[str, object]:
+def teleoperation_status(request: Request) -> _typing38.Dict[str, object]:
     return robot_teleoperation(request).status()
 
 
 @app.post("/api/robot/teleoperation/start")
 def start_teleoperation(
     request: Request, payload: TeleoperationStartRequest
-) -> dict[str, object]:
+) -> _typing38.Dict[str, object]:
     try:
         mode = robot_control(request).mode()
         if mode.get("fsm_id") != 811:
@@ -349,7 +350,7 @@ def start_teleoperation(
 
 
 @app.post("/api/robot/teleoperation/tracking/start")
-def begin_teleoperation_tracking(request: Request) -> dict[str, object]:
+def begin_teleoperation_tracking(request: Request) -> _typing38.Dict[str, object]:
     try:
         return robot_teleoperation(request).begin_tracking()
     except TeleoperationStateError as error:
@@ -359,7 +360,7 @@ def begin_teleoperation_tracking(request: Request) -> dict[str, object]:
 
 
 @app.post("/api/robot/teleoperation/stop")
-def stop_teleoperation(request: Request) -> dict[str, object]:
+def stop_teleoperation(request: Request) -> _typing38.Dict[str, object]:
     try:
         result = robot_teleoperation(request).stop()
         control = robot_control(request)
@@ -381,7 +382,7 @@ def stop_teleoperation(request: Request) -> dict[str, object]:
 
 
 @app.get("/api/robot/mode")
-def robot_mode(request: Request) -> dict[str, object]:
+def robot_mode(request: Request) -> _typing38.Dict[str, object]:
     try:
         return robot_control(request).mode()
     except RobotControlBusyError as error:
@@ -410,7 +411,7 @@ async def robot_mode_websocket(websocket: WebSocket) -> None:
 
 
 @app.post("/api/robot/control")
-def control_robot(request: Request, payload: ControlRequest) -> dict[str, object]:
+def control_robot(request: Request, payload: ControlRequest) -> _typing38.Dict[str, object]:
     try:
         return robot_control(request).execute(
             payload.action,
@@ -425,12 +426,12 @@ def control_robot(request: Request, payload: ControlRequest) -> dict[str, object
 
 
 @app.get("/api/robot/speech/status")
-def robot_speech_status(request: Request) -> dict[str, object]:
+def robot_speech_status(request: Request) -> _typing38.Dict[str, object]:
     return robot_audio(request).status()
 
 
 @app.post("/api/robot/speak")
-def speak_on_robot(request: Request, payload: SpeechRequest) -> dict[str, object]:
+def speak_on_robot(request: Request, payload: SpeechRequest) -> _typing38.Dict[str, object]:
     try:
         return robot_audio(request).speak(payload.text)
     except RobotAudioBusyError as error:
@@ -440,7 +441,7 @@ def speak_on_robot(request: Request, payload: SpeechRequest) -> dict[str, object
 
 
 @app.get("/api/robot/voice-chat/status")
-def robot_voice_chat_status(request: Request) -> dict[str, object]:
+def robot_voice_chat_status(request: Request) -> _typing38.Dict[str, object]:
     return voice_ai(request).status()
 
 
@@ -448,7 +449,7 @@ def robot_voice_chat_status(request: Request) -> dict[str, object]:
 async def robot_text_chat(
     request: Request,
     payload: RobotTextChatRequest,
-) -> dict[str, object]:
+) -> _typing38.Dict[str, object]:
     if payload.messages[-1].role != "user":
         raise HTTPException(
             status_code=422,
@@ -459,7 +460,7 @@ async def robot_text_chat(
     audio_service = robot_audio(request)
     messages = [message.dict() for message in payload.messages]
 
-    def chat_and_speak() -> dict[str, object]:
+    def chat_and_speak() -> _typing38.Dict[str, object]:
         answer = ai_client.chat(messages)
         playback = audio_service.speak_english(answer)
         return {"text": answer, **playback}
@@ -475,7 +476,7 @@ async def robot_text_chat(
 
 
 @app.post("/api/robot/voice-chat")
-async def robot_voice_chat(request: Request) -> dict[str, object]:
+async def robot_voice_chat(request: Request) -> _typing38.Dict[str, object]:
     content_type = request.headers.get("content-type", "application/octet-stream")
     session_id = request.headers.get("x-voice-session", "robot-console").strip()
     if not session_id or len(session_id) > 100:
@@ -489,7 +490,7 @@ async def robot_voice_chat(request: Request) -> dict[str, object]:
     ai_client = voice_ai(request)
     audio_service = robot_audio(request)
 
-    def converse_and_play() -> dict[str, object]:
+    def converse_and_play() -> _typing38.Dict[str, object]:
         result = ai_client.converse(audio, content_type, session_id)
         playback = audio_service.play_wav(result.pop("wav"))
         return {**result, **playback}
@@ -505,7 +506,7 @@ async def robot_voice_chat(request: Request) -> dict[str, object]:
 
 
 @app.post("/api/robot/led")
-def set_robot_led(request: Request, payload: LedRequest) -> dict[str, object]:
+def set_robot_led(request: Request, payload: LedRequest) -> _typing38.Dict[str, object]:
     try:
         return robot_audio(request).set_led(
             payload.red,
@@ -524,7 +525,7 @@ def robot_stereo_detection(request: Request) -> RobotStereoDetectionService:
 
 
 class StereoClassesRequest(BaseModel):
-    classes: list[str] = Field(min_length=1, max_length=30)
+    classes: _typing38.List[str] = Field(min_length=1, max_length=30)
 
 
 class AutoWalkRequest(BaseModel):
@@ -540,7 +541,7 @@ def robot_auto_walk(request: Request) -> RobotAutoWalkService:
 
 
 @app.get("/api/robot/auto-walk/status")
-def robot_auto_walk_status(request: Request) -> dict[str, object]:
+def robot_auto_walk_status(request: Request) -> _typing38.Dict[str, object]:
     return robot_auto_walk(request).status()
 
 
@@ -557,7 +558,7 @@ async def robot_auto_walk_status_websocket(websocket: WebSocket) -> None:
 
 
 @app.post("/api/robot/auto-walk/start")
-def start_robot_auto_walk(request: Request, payload: AutoWalkRequest) -> dict[str, object]:
+def start_robot_auto_walk(request: Request, payload: AutoWalkRequest) -> _typing38.Dict[str, object]:
     try:
         return robot_auto_walk(request).start(**payload.dict())
     except RobotAutoWalkError as error:
@@ -565,12 +566,12 @@ def start_robot_auto_walk(request: Request, payload: AutoWalkRequest) -> dict[st
 
 
 @app.post("/api/robot/auto-walk/stop")
-def stop_robot_auto_walk(request: Request) -> dict[str, object]:
+def stop_robot_auto_walk(request: Request) -> _typing38.Dict[str, object]:
     return robot_auto_walk(request).stop()
 
 
 @app.get("/api/robot/stereo/status")
-def robot_stereo_status(request: Request) -> dict[str, object]:
+def robot_stereo_status(request: Request) -> _typing38.Dict[str, object]:
     return robot_stereo_detection(request).status()
 
 
@@ -589,7 +590,7 @@ async def robot_stereo_status_websocket(websocket: WebSocket) -> None:
 
 
 @app.post("/api/robot/stereo/start")
-def start_robot_stereo(request: Request) -> dict[str, object]:
+def start_robot_stereo(request: Request) -> _typing38.Dict[str, object]:
     detector = robot_stereo_detection(request)
     try:
         with request.app.state.camera_start_lock:
@@ -605,7 +606,7 @@ def start_robot_stereo(request: Request) -> dict[str, object]:
 def start_robot_stereo_view(
     request: Request,
     view: Literal["detection", "left", "right", "depth"],
-) -> dict[str, object]:
+) -> _typing38.Dict[str, object]:
     detector = robot_stereo_detection(request)
     try:
         with request.app.state.camera_start_lock:
@@ -618,7 +619,7 @@ def start_robot_stereo_view(
 
 
 @app.post("/api/robot/stereo/stop")
-def stop_robot_stereo(request: Request) -> dict[str, object]:
+def stop_robot_stereo(request: Request) -> _typing38.Dict[str, object]:
     detector = robot_stereo_detection(request)
     detector.stop()
     return detector.status()
@@ -628,7 +629,7 @@ def stop_robot_stereo(request: Request) -> dict[str, object]:
 def stop_robot_stereo_view(
     request: Request,
     view: Literal["detection", "left", "right", "depth"],
-) -> dict[str, object]:
+) -> _typing38.Dict[str, object]:
     detector = robot_stereo_detection(request)
     detector.stop(view)
     return detector.status()
@@ -638,7 +639,7 @@ def stop_robot_stereo_view(
 def set_robot_stereo_classes(
     request: Request,
     payload: StereoClassesRequest,
-) -> dict[str, object]:
+) -> _typing38.Dict[str, object]:
     try:
         return robot_stereo_detection(request).set_classes(payload.classes)
     except RobotStereoStateError as error:
