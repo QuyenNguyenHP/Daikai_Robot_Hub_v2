@@ -563,3 +563,97 @@ Jetson. Bản sửa chỉ import ImageClient cũ trong nhánh dùng image server
 launcher web với `--no-image-server --display-mode=pass-through` không bị chặn.
 Chạy lại phép kiểm tra `runpy` ở trên sau khi đồng bộ. Chế độ image server cũ
 chưa được chuyển sang TeleImageClient 2.x và sẽ báo lỗi rõ ràng nếu sử dụng.
+
+## Chạy backend bằng systemd trên Jetson
+
+Service mẫu: [`deploy/jetpack5/daikai-robot-hub.service`](deploy/jetpack5/daikai-robot-hub.service).
+Dành cho user `unitree`, project `/home/unitree/Daikai_Robot_Hub_v2`, venv ở
+`.venv`, Cyclone DDS ở `/home/unitree/cyclonedds/install`, interface `eth10`,
+port `8010`. Service dùng đường dẫn Python tuyệt đối nên không cần activate
+venv, Conda hay source `.bashrc`. Frontend được chạy riêng.
+
+Trước khi cài, đồng bộ code mới sang Jetson và hoàn thành kiểm tra GPU/XR ở trên.
+Backend dùng Python 3.8 `.venv`, còn launcher XR dùng chính xác
+`/home/unitree/miniconda3/envs/tv/bin/python` sau khi activate Conda `tv`.
+Nếu web báo thiếu `logging_mp` dù kiểm tra trong terminal thành công, xác minh:
+
+```bash
+/home/unitree/miniconda3/envs/tv/bin/python -c "import sys, logging_mp; print(sys.executable); print(logging_mp.__file__)"
+```
+
+Nếu thiếu, cài bằng chính interpreter đó:
+
+```bash
+/home/unitree/miniconda3/envs/tv/bin/python -m pip install logging_mp
+```
+
+Không cần cài logging_mp vào venv stereo để sửa subprocess XR. Bản frontend mới
+bỏ thông báo launch thành công khi tiến trình đã dừng; luôn kiểm tra log runtime.
+
+### Cài service trên Jetson (một lần)
+
+Dừng backend chạy tay bằng Ctrl+C để giải phóng port 8010. Không chạy song song
+backend thủ công và service, vì chúng dùng chung DDS/camera/IPC.
+
+```bash
+cd ~/Daikai_Robot_Hub_v2
+# Nếu đã có service này, kiểm tra và lưu bản cấu hình cũ trước khi thay thế.
+sudo install -m 644 deploy/jetpack5/daikai-robot-hub.service /etc/systemd/system/daikai-robot-hub.service
+sudo systemctl daemon-reload
+sudo systemd-analyze verify /etc/systemd/system/daikai-robot-hub.service
+sudo systemctl start daikai-robot-hub.service
+sudo systemctl status daikai-robot-hub.service --no-pager
+```
+
+Nếu khác username/path, sửa file unit trước khi cài. Service chạy dưới user
+`unitree`, dùng quyền truy cập thiết bị như user đó; không chạy backend bằng root.
+Service chỉ khởi động API, không tự launch XR hoặc bắt đầu tracking.
+
+Chỉ khi muốn tự khởi động backend sau mỗi lần boot:
+
+```bash
+sudo systemctl enable daikai-robot-hub.service
+```
+
+### Log và các thao tác thường dùng
+
+```bash
+sudo journalctl -u daikai-robot-hub.service -n 100 --no-pager
+sudo journalctl -u daikai-robot-hub.service -f
+sudo systemctl restart daikai-robot-hub.service
+sudo systemctl stop daikai-robot-hub.service
+```
+
+Dùng từng lệnh theo nhu cầu; `journalctl -f` chạy liên tục, Ctrl+C để thoát xem
+log. Sau khi cập nhật code Python, restart service. Nếu đổi unit, chạy
+`daemon-reload` trước khi restart. Service chỉ restart khi backend lỗi, không
+tự restart subprocess XR hoặc bật lại tracking sau lỗi.
+
+Kiểm tra API sau khi khởi động:
+
+```bash
+curl -i http://127.0.0.1:8010/api/health
+```
+
+### Ghi đè cấu hình interface, port và biến môi trường
+
+Service có thể đọc `/etc/default/daikai-robot-hub`. Tạo file này từ mẫu nếu chưa
+có (không ghi đè cấu hình riêng hiện có):
+
+```bash
+sudo install -m 644 deploy/jetpack5/daikai-robot-hub.env.example /etc/default/daikai-robot-hub
+sudo nano /etc/default/daikai-robot-hub
+sudo systemctl restart daikai-robot-hub.service
+```
+
+Dùng đường dẫn tuyệt đối trong file env, không dùng `$HOME`, `~` hay shell
+expansion. Nếu đổi port, sửa proxy frontend tương ứng. Interface ở file env
+chọn kết nối của backend; XR launcher hiện vẫn hard-code `eth10` riêng.
+Certificate/key phải tồn tại và user unitree đọc được nếu dùng XR. Đổi IP hoặc
+certificate thì kiểm tra lại HTTPS trên kính. Nếu XR cần GUI nhưng service không
+có phiên desktop, cấu hình chế độ headless phù hợp trước; không tự giả định có
+`DISPLAY` khi chạy bằng systemd.
+
+Service chuyển log vào journal, đợi backend cleanup lúc stop rồi thu hồi các
+tiến trình con còn lại. Không dùng stop/restart service thay cho nút dừng khẩn
+cấp của robot.
