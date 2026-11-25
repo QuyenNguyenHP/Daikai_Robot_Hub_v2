@@ -1,3 +1,5 @@
+import { HudIcon } from './HudIcon'
+import { FaceEnrollmentDialog } from './FaceEnrollmentDialog'
 import { useEffect, useState } from 'react'
 import {
   getRobotStereoStreamUrl,
@@ -12,6 +14,7 @@ export function VideoStreamingPanel() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState(null)
   const [feedKey, setFeedKey] = useState(0)
+  const [enrolling, setEnrolling] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -24,7 +27,7 @@ export function VideoStreamingPanel() {
         try {
           setStatus(JSON.parse(event.data))
         } catch {
-          setMessage({ type: 'error', text: 'Object detection status could not be decoded.' })
+          setMessage({ type: 'error', text: 'Vision status could not be decoded.' })
         }
       }
       socket.onclose = () => {
@@ -45,7 +48,7 @@ export function VideoStreamingPanel() {
     try {
       setStatus(await startRobotStereoView('detection'))
       setFeedKey((key) => key + 1)
-      setMessage({ type: 'success', text: 'Object detection video started.' })
+      setMessage({ type: 'success', text: 'Vision video started.' })
     } catch (error) {
       setMessage({ type: 'error', text: error.message })
     } finally {
@@ -58,7 +61,7 @@ export function VideoStreamingPanel() {
     setMessage(null)
     try {
       setStatus(await stopRobotStereoView('detection'))
-      setMessage({ type: 'success', text: 'Object detection video stopped.' })
+      setMessage({ type: 'success', text: 'Vision video stopped.' })
     } catch (error) {
       setMessage({ type: 'error', text: error.message })
     } finally {
@@ -66,7 +69,7 @@ export function VideoStreamingPanel() {
     }
   }
 
-  const running = Boolean(status?.views?.detection)
+  const running = Boolean(status?.running && status?.views?.detection && status?.state !== 'error')
   const loading = running && status?.state === 'loading'
 
   return (
@@ -74,15 +77,15 @@ export function VideoStreamingPanel() {
       <div className="panel-heading video-stream-heading">
         <div>
           <p className="eyebrow">LIVE VIDEO</p>
-          <h2>Object detection</h2>
+          <h2>Vision</h2>
         </div>
         <span className={`status-pill ${running ? 'live' : ''}`}>
-          <i /> {loading ? 'Loading model…' : running ? 'Live' : 'Stopped'}
+          <i /> {loading ? 'Preparing AI…' : running ? (status?.connected ? 'Live' : 'Waiting for camera…') : 'Stopped'}
         </span>
       </div>
 
       <p className="video-stream-description">
-        YOLO-World object detection using the stereo camera pair on UDP ports{' '}
+        Person detection and face recognition using the stereo cameras on UDP ports{' '}
         {status?.ports?.left || 5002} and {status?.ports?.right || 5003}.
       </p>
 
@@ -94,19 +97,20 @@ export function VideoStreamingPanel() {
           <img
             key={feedKey}
             src={`${getRobotStereoStreamUrl('detection', feedKey)}`}
-            alt="Live object detection from the robot camera"
-            onError={() => setMessage({ type: 'error', text: 'The object detection feed could not be displayed.' })}
+            alt="Live Vision from the robot camera"
+            onError={() => setMessage({ type: 'error', text: 'The Vision feed could not be displayed.' })}
           />
         ) : (
           <div className="video-viewer-placeholder">
-            <span aria-hidden="true">⌾</span>
-            <strong>Object detection is off</strong>
-            <small>Start live view to detect objects from the robot camera.</small>
+            <span aria-hidden="true"><HudIcon name="vision" /></span>
+            <strong>Vision is off</strong>
+            <small>Start live view to detect people and recognize faces from the robot camera.</small>
           </div>
         )}
       </div>
 
       <div className="video-stream-actions">
+        <button type="button" className="button secondary" onClick={() => setEnrolling(true)}><HudIcon name="face" /> Register face</button>
         {running ? (
           <button type="button" className="button danger" disabled={busy} onClick={stop}>
             {busy ? 'Stopping…' : 'Stop live view'}
@@ -118,12 +122,17 @@ export function VideoStreamingPanel() {
         )}
       </div>
 
+      {status?.error && <p className="error-message">{status.error}</p>}
+      {status?.face_recognition_error && <p className="error-message">Face recognition unavailable: {status.face_recognition_error}</p>}
+      {running && <p className="video-stream-description">People: {status?.detections?.length || 0} · Faces: {status?.faces?.length || 0}</p>}
+      {running && status?.faces?.length > 0 && <p className="video-stream-description">Faces: {status.faces.map((face) => face.name).join(', ')}</p>}
       {message && <p className={`${message.type}-message`}>{message.text}</p>}
-      {status?.detections?.length > 0 && (
+      {running && status?.detections?.length > 0 && (
         <p className="video-stream-description">
           Detecting: {status.detections.map((item) => item.name).join(', ')}
         </p>
       )}
+      {enrolling && <FaceEnrollmentDialog onClose={() => setEnrolling(false)} />}
     </section>
   )
 }

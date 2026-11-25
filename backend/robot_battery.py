@@ -73,13 +73,17 @@ class RobotBatteryService:
             if self._state not in {"not_configured", "error"}:
                 self._state = "stopped"
 
+    def _message_type(self):
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import BmsState_
+        return BmsState_
+
     def _subscribe(self) -> None:
         try:
             from unitree_sdk2py.core.channel import (
                 ChannelFactoryInitialize,
                 ChannelSubscriber,
             )
-            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import BmsState_
+            message_type = self._message_type()
         except ImportError as exc:
             self._set_error(f"Unitree SDK could not be imported: {exc}")
             return
@@ -93,7 +97,7 @@ class RobotBatteryService:
                 # initialization failures during backend startup.
                 with UNITREE_DDS_INIT_LOCK:
                     ChannelFactoryInitialize(0, self.network_interface)
-                    subscriber = ChannelSubscriber(self.topic, BmsState_)
+                    subscriber = ChannelSubscriber(self.topic, message_type)
                     subscriber.Init(self._handle_message, 10)
                 self._subscriber = subscriber
                 with self._lock:
@@ -103,7 +107,7 @@ class RobotBatteryService:
                 break
             except Exception as exc:
                 self._set_error(
-                    f"Could not subscribe to battery data: {exc}",
+                    f"Could not subscribe to {self.topic}: {exc}",
                     state="reconnecting",
                 )
                 if self._stop_event.wait(retry_delay):
@@ -150,6 +154,7 @@ class RobotBatteryService:
             "charge_state": charge_state,
             "max_temperature_c": max(temperatures) if temperatures else None,
             "cell_count": len(cell_mv),
+            "cell_voltages_v": [round(value / 1000.0, 3) for value in cell_mv],
             "cells": f"{len(cell_mv)}S" if cell_mv else None,
             "balance_mv": balance_mv,
             "balance": (

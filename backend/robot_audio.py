@@ -183,16 +183,20 @@ class RobotAudioService:
         self,
         text: str,
         speaker_id: _typing38.Union[int, None] = None,
+        volume: _typing38.Union[int, None] = None,
     ) -> _typing38.Dict[str, object]:
         normalized = self._validate(text)
         selected_speaker_id = self._speaker_id if speaker_id is None else speaker_id
-        if isinstance(selected_speaker_id, bool) or not 0 <= selected_speaker_id <= 4:
+        if isinstance(selected_speaker_id, bool) or not isinstance(selected_speaker_id, int) or not 0 <= selected_speaker_id <= 4:
             raise RobotAudioError("Speaker ID must be an integer from 0 to 4.")
+        selected_volume = SPEECH_VOLUME if volume is None else volume
+        if isinstance(selected_volume, bool) or not isinstance(selected_volume, int) or not 0 <= selected_volume <= 100:
+            raise RobotAudioError("Volume must be an integer from 0 to 100.")
         if not self._lock.acquire(blocking=False):
             raise RobotAudioBusyError("The robot is already speaking.")
         try:
             client = self._audio_client()
-            code = client.SetVolume(SPEECH_VOLUME)
+            code = client.SetVolume(selected_volume)
             if code != 0:
                 raise RobotAudioError(f"SetVolume failed with code {code}.")
             code = client.TtsMaker(normalized, selected_speaker_id)
@@ -200,9 +204,11 @@ class RobotAudioService:
                 raise RobotAudioError(f"TtsMaker failed with code {code}.")
             return {
                 "spoken": True,
+                "accepted": True,
+                "tts_backend": "unitree_tts_maker",
                 "text": normalized,
                 "speaker_id": selected_speaker_id,
-                "volume": SPEECH_VOLUME,
+                "volume": selected_volume,
             }
         except RobotAudioError:
             raise

@@ -18,7 +18,8 @@
     "@mui/icons-material": "^9.4.0",
     "@mui/material": "^9.4.0",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "three": "^0.160.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",

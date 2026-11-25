@@ -1,4 +1,5 @@
-import { BatteryStatus } from '../components/BatteryStatus'
+import { TextToSpeechPanel } from '../components/TextToSpeechPanel'
+import { RobotActionsPanel } from '../components/RobotActionsPanel'
 import { RobotSpeechPanel } from '../components/RobotSpeechPanel'
 import { RobotControlPanel } from '../components/RobotControlPanel'
 import { RobotLedPanel } from '../components/RobotLedPanel'
@@ -11,13 +12,16 @@ export function FirstPage() {
   return (
     <div className="first-page">
       <section className="workspace-grid">
-        <BatteryStatus />
         <div className="console-column">
           <VideoStreamingPanel />
           {ROBOT_CONVERSATION_ENABLED && <RobotSpeechPanel />}
+          <TextToSpeechPanel />
           <RobotLedPanel />
         </div>
-        <RobotControlPanel />
+        <div className="console-column">
+          <RobotControlPanel />
+          <RobotActionsPanel />
+        </div>
       </section>
     </div>
   )

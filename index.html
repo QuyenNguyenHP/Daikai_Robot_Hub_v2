@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>R1 Telemetry HUD</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#070d17;--panel:rgba(14,26,44,.72);--line:#1c3350;--cyan:#4fc3f7;--txt:#e6f1ff;--mut:#7f95b3;--ok:#3ddc97;--warn:#ffb547;--bad:#ff5d6c}
+*{box-sizing:border-box;margin:0}
+body{background:radial-gradient(ellipse at 50% 40%,#0f2340 0,var(--bg) 70%);color:var(--txt);font-family:Inter,sans-serif;height:100vh;overflow:hidden}
+#scene{position:fixed;inset:0}
+.hud{position:fixed;inset:0;pointer-events:none;display:grid;grid-template-columns:300px 1fr 300px;grid-template-rows:auto 1fr auto;gap:16px;padding:16px}
+.panel{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;backdrop-filter:blur(8px);box-shadow:0 0 0 1px rgba(79,195,247,.05),0 10px 40px rgba(0,0,0,.4)}
+.tag{font-size:10px;letter-spacing:.14em;color:var(--cyan);font-weight:600;text-transform:uppercase}
+h2{font-size:20px;font-weight:600;margin:2px 0 10px}
+.mono{font-family:'JetBrains Mono',monospace}
+.row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px dashed rgba(127,149,179,.15);font-size:12px;color:var(--mut)}
+.row b{font-family:'JetBrains Mono';color:var(--txt);font-size:15px;font-weight:600}
+.row b small{color:var(--mut);font-size:10px;margin-left:3px}
+.top{grid-column:1/4;display:flex;justify-content:space-between;align-items:center}
+.status{display:flex;gap:8px;align-items:center;font-size:12px;border:1px solid var(--line);padding:6px 12px;border-radius:99px;cursor:pointer}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.off .dot{background:var(--mut);box-shadow:none}
+.left{grid-column:1;grid-row:2;align-self:start}.right{grid-column:3;grid-row:2;align-self:start}
+.bottom{grid-column:1/4;grid-row:3}
+.bat{height:14px;border:1px solid var(--line);border-radius:4px;overflow:hidden;margin:4px 0 10px}
+.bat i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--ok));transition:width .5s}
+.cells{display:flex;gap:3px;align-items:flex-end;height:44px;margin-top:8px}
+.cells span{flex:1;background:var(--cyan);opacity:.75;border-radius:2px 2px 0 0;transition:height .4s}
+.cells span.hi{background:var(--warn);opacity:1}
+.big{font-family:'JetBrains Mono';font-size:34px;font-weight:600}
+.big small{font-size:14px;color:var(--mut)}
+canvas.spark{width:100%;height:28px;display:block}
+.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;margin:6px 0}
+.trio div{font-size:10px;color:var(--mut)}.trio b{display:block;font-family:'JetBrains Mono';font-size:15px;color:var(--txt)}
+#timeline{width:100%;height:90px;display:block}
+.legend{display:flex;gap:16px;font-size:11px;color:var(--mut)}.legend i{display:inline-block;width:10px;height:2px;margin-right:5px;vertical-align:middle}
+.callout{position:fixed;font-family:'JetBrains Mono';font-size:11px;color:var(--cyan);pointer-events:none;white-space:nowrap;text-shadow:0 0 8px rgba(79,195,247,.6)}
+#svg{position:fixed;inset:0;pointer-events:none}
+#nosig{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font-family:'JetBrains Mono';letter-spacing:.4em;color:var(--bad);font-size:22px;display:none;text-shadow:0 0 12px var(--bad)}
+body.offline #nosig{display:block}
+body.offline .live{opacity:.35}
+#load{position:fixed;left:50%;bottom:50%;transform:translateX(-50%);color:var(--mut);font-size:12px}
+@media(max-width:900px){.hud{grid-template-columns:1fr;grid-template-rows:auto;overflow:auto}.left,.right,.bottom,.top{grid-column:1;grid-row:auto}}
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<svg id="svg"></svg>
+<div id="load">Đang tải mô hình R1…</div>
+<div id="nosig">NO SIGNAL</div>
+<div class="hud">
+  <div class="panel top">
+    <div><div class="tag">Unitree R1 · Robot Telemetry</div><h2 style="margin:0">Live HUD <span class="mono" style="font-size:12px;color:var(--mut)" id="clock"></span></h2></div>
+    <div class="status" id="status" title="Bấm để giả lập Online/Offline"><span class="dot"></span><span id="stxt">Online · 30 Hz (demo)</span></div>
+  </div>
+
+  <div class="panel left live">
+    <div class="tag">Battery</div>
+    <div class="big"><span id="soc">82</span><small>%</small></div>
+    <div class="bat"><i id="batbar" style="width:82%"></i></div>
+    <div class="row">Voltage<b id="v">48.6<small>V</small></b></div>
+    <canvas class="spark" id="sv"></canvas>
+    <div class="row">Current<b id="c">3.2<small>A</small></b></div>
+    <canvas class="spark" id="sc"></canvas>
+    <div class="row">State<b id="st" style="color:var(--ok)">DISCHARGING</b></div>
+    <div class="row">Temp max<b id="t">36.4<small>°C</small></b></div>
+    <div class="row">Imbalance<b id="imb">12<small>mV</small></b></div>
+    <div class="tag" style="margin-top:10px">Cells (13S)</div>
+    <div class="cells" id="cells"></div>
+  </div>
+
+  <div class="panel right live">
+    <div class="tag">IMU</div>
+    <h2>Orientation</h2>
+    <div class="trio"><div>Roll<b id="r">0</b></div><div>Pitch<b id="p">0</b></div><div>Yaw<b id="y">0</b></div></div>
+    <div class="tag" style="margin-top:8px">Angular velocity rad/s</div>
+    <div class="trio"><div>X<b id="gx"></b></div><div>Y<b id="gy"></b></div><div>Z<b id="gz"></b></div></div>
+    <canvas class="spark" id="sg"></canvas>
+    <div class="tag" style="margin-top:8px">Acceleration m/s²</div>
+    <div class="trio"><div>X<b id="ax"></b></div><div>Y<b id="ay"></b></div><div>Z<b id="az"></b></div></div>
+    <div class="tag" style="margin-top:8px">Quaternion (w,x,y,z)</div>
+    <div class="mono" style="font-size:12px;margin-top:4px" id="q"></div>
+    <div class="row" style="margin-top:8px">IMU temp<b id="it">41.0<small>°C</small></b></div>
+  </div>
+
+  <div class="panel bottom live">
+    <div style="display:flex;justify-content:space-between"><div class="tag">Timeline · 60s</div>
+    <div class="legend"><span><i style="background:#4fc3f7"></i>Voltage</span><span><i style="background:#3ddc97"></i>Current</span><span><i style="background:#ffb547"></i>Temp</span></div></div>
+    <canvas id="timeline"></canvas>
+  </div>
+</div>
+
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {STLLoader} from 'three/addons/loaders/STLLoader.js';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+const $=id=>document.getElementById(id);
+const el=$('scene');
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));el.appendChild(renderer.domElement);
+const scene=new THREE.Scene();scene.fog=new THREE.Fog(0x070d17,3,8);
+const cam=new THREE.PerspectiveCamera(35,1,.01,50);cam.position.set(1.9,1.1,2.3);
+const ctl=new OrbitControls(cam,renderer.domElement);ctl.target.set(0,.65,0);ctl.enableDamping=true;ctl.minDistance=1.2;ctl.maxDistance=5;
+scene.add(new THREE.HemisphereLight(0x9fd8ff,0x05101c,.9));
+const key=new THREE.DirectionalLight(0xffffff,1.4);key.position.set(2,3,2);scene.add(key);
+const rim=new THREE.DirectionalLight(0x4fc3f7,2.2);rim.position.set(-2,1.5,-2);scene.add(rim);
+
+// floor grid + compass ring
+const grid=new THREE.GridHelper(6,40,0x1f4a74,0x10263f);scene.add(grid);
+const ring=new THREE.Mesh(new THREE.RingGeometry(.55,.57,96),new THREE.MeshBasicMaterial({color:0x4fc3f7,transparent:true,opacity:.6,side:2}));
+ring.rotation.x=-Math.PI/2;ring.position.y=.002;scene.add(ring);
+for(let i=0;i<36;i++){const t=new THREE.Mesh(new THREE.PlaneGeometry(.006,i%9?0.03:0.07),new THREE.MeshBasicMaterial({color:0x4fc3f7,side:2}));
+ const a=i/36*Math.PI*2;t.position.set(Math.sin(a)*.6,.003,Math.cos(a)*.6);t.rotation.set(-Math.PI/2,0,-a);scene.add(t);}
+const yawNeedle=new THREE.Mesh(new THREE.ConeGeometry(.035,.12,3),new THREE.MeshBasicMaterial({color:0xffb547}));
+yawNeedle.rotation.x=Math.PI/2;const yawPivot=new THREE.Group();yawNeedle.position.z=.68;yawPivot.add(yawNeedle);yawPivot.position.y=.01;scene.add(yawPivot);
+
+// robot: world(Y-up) -> zup frame -> imu group (quaternion in MuJoCo frame)
+const zup=new THREE.Group();zup.rotation.x=-Math.PI/2;scene.add(zup);
+const pivotZ=.72;const imuG=new THREE.Group();imuG.position.z=pivotZ;zup.add(imuG);
+const body=new THREE.Group();body.position.z=-pivotZ;imuG.add(body);
+const mat=new THREE.MeshStandardMaterial({color:0x9fb6d0,metalness:.6,roughness:.35,transparent:true,opacity:.92});
+mat.onBeforeCompile=s=>{s.fragmentShader=s.fragmentShader.replace('#include <dithering_fragment>',
+ `#include <dithering_fragment>
+ float fr=pow(1.0-abs(dot(normalize(vNormal),vec3(0,0,1))),2.5);
+ gl_FragColor.rgb+=vec3(0.31,0.76,0.97)*fr*1.3;`);};
+const wire=new THREE.MeshBasicMaterial({color:0x4fc3f7,wireframe:true,transparent:true,opacity:.18});
+let robot,robotWire;
+new STLLoader().load('r1.stl',g=>{g.computeVertexNormals();
+ robot=new THREE.Mesh(g,mat);robotWire=new THREE.Mesh(g,wire);robotWire.visible=false;body.add(robot,robotWire);$('load').remove();},
+ x=>{if(x.total)$('load').textContent=`Đang tải mô hình R1… ${(x.loaded/x.total*100|0)}%`});
+
+// battery bar on chest
+const batBox=new THREE.Mesh(new THREE.BoxGeometry(.012,.12,.03),new THREE.MeshBasicMaterial({color:0x3ddc97}));
+batBox.position.set(.16,0,1.02);body.add(batBox);
+
+// vectors
+const accArrow=new THREE.ArrowHelper(new THREE.Vector3(0,0,1),new THREE.Vector3(0,0,0),.3,0xff5d6c,.05,.03);imuG.add(accArrow);
+const axes=new THREE.AxesHelper(.25);imuG.add(axes);
+const gyroArcs=[0xff5d6c,0x3ddc97,0x4fc3f7].map((c,i)=>{const m=new THREE.Mesh(new THREE.TorusGeometry(.32,.004,6,64,1),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:.9}));
+ if(i==0)m.rotation.y=Math.PI/2;if(i==1)m.rotation.x=Math.PI/2;imuG.add(m);return m;});
+
+// current particles from chest to limbs
+const targets=[[0,.1,.05],[0,-.1,.05],[0,.22,.8],[0,-.22,.8]].map(a=>new THREE.Vector3(...a));
+const src=new THREE.Vector3(.1,0,1.0);const NP=80;
+const pg=new THREE.BufferGeometry();const pp=new Float32Array(NP*3);pg.setAttribute('position',new THREE.BufferAttribute(pp,3));
+const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0x3ddc97,size:.018,transparent:true,opacity:.9,blending:THREE.AdditiveBlending,depthWrite:false}));body.add(pts);
+const ph=Array.from({length:NP},(_,i)=>({t:Math.random(),k:i%4}));
+
+// HUD callouts
+const callouts=[{p:new THREE.Vector3(.16,0,1.08),txt:()=>`BAT ${S.soc.toFixed(0)}% · ${S.v.toFixed(1)}V`,dx:-200,dy:-40},
+ {p:new THREE.Vector3(0,0,1.18),txt:()=>`IMU ${S.it.toFixed(1)}°C`,dx:160,dy:-50},
+ {p:new THREE.Vector3(0,.1,.45),txt:()=>`I ${S.c.toFixed(1)}A`,dx:-190,dy:40}];
+callouts.forEach(c=>{c.el=document.createElement('div');c.el.className='callout live';document.body.appendChild(c.el);});
+
+// fake telemetry
+const S={soc:82,v:48.6,c:3.2,t:36.4,it:41,cells:Array(13).fill(3.74),online:true};
+const H={v:[],c:[],t:[],g:[]};
+const cellsEl=$('cells');for(let i=0;i<13;i++)cellsEl.appendChild(document.createElement('span'));
+let q=new THREE.Quaternion(),gyro=new THREE.Vector3(),acc=new THREE.Vector3(0,0,9.81);
+const f=(x,n=2)=>(x>=0?' ':'')+x.toFixed(n);
+function tick(time){
+ const s=time/1000;
+ const r=.08*Math.sin(s*1.3),p=.06*Math.sin(s*.9+1),y=.6*Math.sin(s*.25);
+ const e=new THREE.Euler(r,p,y,'ZYX');q.setFromEuler(e);
+ gyro.set(.08*1.3*Math.cos(s*1.3),.06*.9*Math.cos(s*.9+1),.6*.25*Math.cos(s*.25));
+ acc.set(Math.sin(s*2.1)*.6,Math.cos(s*1.7)*.4,9.81+Math.sin(s*3)*.3);
+ S.c=3.2+1.6*Math.abs(Math.sin(s*.7))+Math.random()*.3;S.v=48.9-S.c*.08;S.soc-=.0003;S.t=36+S.c*.3;S.it=40.8+Math.sin(s*.1)*.4;
+ S.cells=S.cells.map((_,i)=>3.74+(i==7?-.014:0)+Math.random()*.004);
+}
+function sample(){for(const[k,v]of[['v',S.v],['c',S.c],['t',S.t],['g',gyro.length()]]){H[k].push(v);if(H[k].length>180)H[k].shift();}}
+setInterval(sample,333);
+function spark(id,arr,col){const c=$(id),w=c.width=c.clientWidth*2,h=c.height=56,x=c.getContext('2d');if(arr.length<2)return;
+ const mn=Math.min(...arr),mx=Math.max(...arr)+1e-6;x.strokeStyle=col;x.lineWidth=2;x.beginPath();
+ arr.forEach((v,i)=>x[i?'lineTo':'moveTo'](i/(arr.length-1)*w,h-4-(v-mn)/(mx-mn)*(h-8)));x.stroke();
+ x.lineTo(w,h);x.lineTo(0,h);x.fillStyle=col+'22';x.fill();}
+function timeline(){const c=$('timeline'),w=c.width=c.clientWidth*2,h=c.height=180,x=c.getContext('2d');
+ x.strokeStyle='#1c3350';for(let i=1;i<4;i++){x.beginPath();x.moveTo(0,h*i/4);x.lineTo(w,h*i/4);x.stroke();}
+ [['v','#4fc3f7'],['c','#3ddc97'],['t','#ffb547']].forEach(([k,col])=>{const a=H[k];if(a.length<2)return;const mn=Math.min(...a)-.2,mx=Math.max(...a)+.2;
+ x.strokeStyle=col;x.lineWidth=2.5;x.beginPath();a.forEach((v,i)=>x[i?'lineTo':'moveTo'](w-(a.length-1-i)/179*w,h-(v-mn)/(mx-mn)*h));x.stroke();});}
+function ui(){
+ if(!S.online)return;
+ const e=new THREE.Euler().setFromQuaternion(q,'ZYX'),d=THREE.MathUtils.radToDeg;
+ $('r').textContent=f(d(e.x),1)+'°';$('p').textContent=f(d(e.y),1)+'°';$('y').textContent=f(d(e.z),1)+'°';
+ $('gx').textContent=f(gyro.x);$('gy').textContent=f(gyro.y);$('gz').textContent=f(gyro.z);
+ $('ax').textContent=f(acc.x);$('ay').textContent=f(acc.y);$('az').textContent=f(acc.z);
+ $('q').textContent=`${q.w.toFixed(3)}, ${q.x.toFixed(3)}, ${q.y.toFixed(3)}, ${q.z.toFixed(3)}`;
+ $('soc').textContent=S.soc.toFixed(0);$('batbar').style.width=S.soc+'%';
+ $('v').innerHTML=S.v.toFixed(2)+'<small>V</small>';$('c').innerHTML=S.c.toFixed(2)+'<small>A</small>';
+ $('t').innerHTML=S.t.toFixed(1)+'<small>°C</small>';$('it').innerHTML=S.it.toFixed(1)+'<small>°C</small>';
+ const mn=Math.min(...S.cells),mx=Math.max(...S.cells);$('imb').innerHTML=((mx-mn)*1000).toFixed(0)+'<small>mV</small>';
+ [...cellsEl.children].forEach((sp,i)=>{sp.style.height=(20+(S.cells[i]-3.70)/.06*80)+'%';sp.classList.toggle('hi',S.cells[i]==mn);});
+ spark('sv',H.v,'#4fc3f7');spark('sc',H.c,'#3ddc97');spark('sg',H.g,'#ff5d6c');timeline();
+ $('clock').textContent=new Date().toLocaleTimeString('vi-VN');
+}
+setInterval(ui,100);
+
+$('status').onclick=()=>{S.online=!S.online;document.body.classList.toggle('offline',!S.online);$('status').classList.toggle('off',!S.online);
+ $('stxt').textContent=S.online?'Online · 30 Hz (demo)':'Offline';
+ if(!S.online)['r','p','y','gx','gy','gz','ax','ay','az','q'].forEach(i=>$(i).textContent='—');};
+
+const svg=$('svg');const v3=new THREE.Vector3();
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();}
+addEventListener('resize',resize);resize();
+let idle=0;
+renderer.setAnimationLoop(t=>{
+ if(S.online){tick(t);imuG.quaternion.copy(q);}
+ else{imuG.quaternion.slerp(new THREE.Quaternion(),.05);idle+=.004;zup.rotation.z=idle;}
+ if(robot){robot.visible=S.online;robotWire.visible=!S.online;wire.opacity=.15+.1*Math.sin(t/300);}
+ yawPivot.rotation.y=new THREE.Euler().setFromQuaternion(q,'ZYX').z+zup.rotation.z;
+ // accel arrow
+ const a=acc.clone().applyQuaternion(q.clone().invert());accArrow.setDirection(a.clone().normalize());accArrow.setLength(a.length()/30,.05,.03);
+ accArrow.visible=axes.visible=S.online;
+ [gyro.x,gyro.y,gyro.z].forEach((g,i)=>{const m=gyroArcs[i];m.visible=S.online;m.geometry.dispose();
+  m.geometry=new THREE.TorusGeometry(.32+i*.02,.005,6,48,Math.max(.05,Math.min(Math.abs(g)*25,6)));m.scale.z=g<0?-1:1;});
+ // battery colour + particles
+ batBox.scale.y=S.soc/100;batBox.material.color.set(S.soc>50?0x3ddc97:S.soc>20?0xffb547:0xff5d6c);
+ const sp=S.online?S.c*.004:0;ph.forEach((o,i)=>{o.t=(o.t+sp)%1;v3.lerpVectors(src,targets[o.k],o.t);pp.set([v3.x,v3.y+(Math.random()-.5)*.01,v3.z],i*3);});
+ pg.attributes.position.needsUpdate=true;pts.visible=S.online;
+ // callouts
+ let lines='';callouts.forEach(c=>{v3.copy(c.p);body.localToWorld(v3);v3.project(cam);
+  const x=(v3.x*.5+.5)*innerWidth,y=(-v3.y*.5+.5)*innerHeight,tx=x+c.dx,ty=y+c.dy,mx=x+c.dx*.4;
+  c.el.style.left=(c.dx<0?tx-140:tx+4)+'px';c.el.style.top=(ty-16)+'px';c.el.style.width='140px';c.el.style.textAlign=c.dx<0?'right':'left';
+  c.el.textContent=S.online?c.txt():'—';
+  lines+=`<polyline points="${x},${y} ${mx},${ty} ${tx},${ty}" fill="none" stroke="#4fc3f7" stroke-opacity=".7"/><circle cx="${x}" cy="${y}" r="3" fill="#4fc3f7"/>`;});
+ svg.innerHTML=S.online?lines:'';
+ ctl.update();renderer.render(scene,cam);
+});
+</script>
+</body>
+</html>

@@ -97,11 +97,11 @@ export function controlRobot(action, options = {}) {
   })
 }
 
-export function speakOnRobot(text) {
+export function speakOnRobot(text, options = {}) {
   return request('/api/robot/speak', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, ...options }),
   })
 }
 
@@ -185,3 +185,22 @@ export function startRobotAutoWalk(settings) {
 export const stopRobotAutoWalk = () => (
   request('/api/robot/auto-walk/stop', { method: 'POST' })
 )
+
+export const getRobotIMUWebSocketUrl = () => webSocketUrl('/api/robot/imu/ws')
+
+export const getRobotArmActions = () => request('/api/robot/arm-actions')
+
+export const executeRobotArmAction = (actionId) => request('/api/robot/arm-actions/execute', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action_id: actionId }),
+})
+
+export const getRobotSpeechStatus = () => request('/api/robot/speech/status')
+export const getEnrolledPeople = () => request('/api/vision/people')
+export function enrollFace(name, files) {
+  const body = new FormData()
+  body.append('name', name)
+  files.forEach((file) => body.append('images', file))
+  return request('/api/vision/enroll', { method: 'POST', body })
+}

@@ -69,6 +69,10 @@ class RobotControlService:
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._client = None
+        self._arm_client = None
+        self._arm_actions = {}
+        self._arm_action_ready_at = 0.0
+        self._arm_action_wait_seconds = 5.0
         self._locomotion_started = False
         self._last_fsm_id: _typing38.Union[int, None] = None
         try:
@@ -101,6 +105,9 @@ class RobotControlService:
                 "configured": bool(self.network_interface),
                 "initialized": self._client is not None,
                 "busy": self._lock.locked(),
+                "arm_actions": [{"id": key, "name": name} for key, name in sorted(self._arm_actions.items())],
+                "arm_action_wait_seconds": self._arm_action_wait_seconds,
+                "arm_action_cooldown_seconds": round(max(0.0, self._arm_action_ready_at - time.monotonic()), 1),
                 "locomotion_started": self._locomotion_started,
                 "last_fsm_id": self._last_fsm_id,
                 "accepted_locomotion_fsm_ids": sorted(LOCOMOTION_FSM_IDS),
@@ -149,6 +156,104 @@ class RobotControlService:
 
         self._client = client
         return client
+
+    def _arm_client_instance(self):
+        if self._arm_client is not None:
+            return self._arm_client
+        if not self.network_interface:
+            raise RobotControlError("UNITREE_NETWORK_INTERFACE is not configured.")
+        try:
+            from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+            from unitree_sdk2py.g1.arm.g1_arm_action_client import G1ArmActionClient
+            with UNITREE_DDS_INIT_LOCK:
+                ChannelFactoryInitialize(0, self.network_interface)
+                client = G1ArmActionClient()
+                client.SetTimeout(10.0)
+                client.Init()
+            self._arm_client = client
+            return client
+        except Exception as exc:
+            raise RobotControlError(f"Could not initialize the arm-action client: {exc}") from exc
+
+    @staticmethod
+    def _collect_arm_actions(value, actions) -> None:
+        """Accept the nested action-list response used by the R1 firmware."""
+        if isinstance(value, dict):
+            if "id" in value and "name" in value:
+                try:
+                    actions[int(value["id"])] = str(value["name"])
+                except (TypeError, ValueError):
+                    pass
+            for child in value.values():
+                RobotControlService._collect_arm_actions(child, actions)
+        elif isinstance(value, list):
+            for child in value:
+                RobotControlService._collect_arm_actions(child, actions)
+
+    def _read_arm_actions(self, client):
+        code, payload = client.GetActionList()
+        self._require_success(code, "read arm actions")
+        actions = {}
+        self._collect_arm_actions(payload, actions)
+        with self._state_lock:
+            self._arm_actions = actions
+        return actions
+
+    def available_arm_actions(self) -> _typing38.Dict[str, object]:
+        if not self._lock.acquire(blocking=False):
+            raise RobotControlBusyError("Another robot control command is running.")
+        try:
+            self._read_arm_actions(self._arm_client_instance())
+        except RobotControlError:
+            raise
+        except Exception as exc:
+            raise RobotControlError(f"Could not read arm actions: {exc}") from exc
+        finally:
+            self._lock.release()
+        return self.status()
+
+    def _require_arm_ready(self) -> None:
+        remaining = self._arm_action_ready_at - time.monotonic()
+        if remaining > 0:
+            raise RobotControlBusyError(f"Wait {remaining:.1f} seconds before sending another action.")
+
+    def execute_arm_action(self, action_id: int) -> _typing38.Dict[str, object]:
+        if not self._lock.acquire(blocking=False):
+            raise RobotControlBusyError("Another robot control command is running.")
+        action_name = f"arm_action_{action_id}"
+        try:
+            self._require_arm_ready()
+            if self._polishing_thread and self._polishing_thread.is_alive():
+                raise RobotControlBusyError("Stop crankshaft polishing before sending an arm action.")
+            arm_client = self._arm_client_instance()
+            actions = self._read_arm_actions(arm_client)
+            if action_id not in actions:
+                raise RobotControlStateError("This action is not advertised by the robot firmware. Refresh the action list.")
+            action_name = actions[action_id]
+            client = self._client_instance()
+            fsm_id = self._fsm_id(client)
+            self._set_fsm_state(fsm_id)
+            if fsm_id != LOCOMOTION_FSM_ID:
+                raise RobotControlStateError("Arm actions require locomotion FSM 811. Enable locomotion first.")
+            # A timeout may occur after the robot received the command. Keep
+            # the same cooldown even if the RPC result is uncertain.
+            try:
+                code = arm_client.ExecuteAction(action_id)
+            finally:
+                with self._state_lock:
+                    self._arm_action_ready_at = time.monotonic() + self._arm_action_wait_seconds
+            self._require_success(code, action_name)
+            self._set_result(action_name, code=code)
+        except RobotControlError as exc:
+            self._set_result(action_name, error=str(exc))
+            raise
+        except Exception as exc:
+            message = f"Arm action failed: {exc}"
+            self._set_result(action_name, error=message)
+            raise RobotControlError(message) from exc
+        finally:
+            self._lock.release()
+        return {"ok": True, "action_id": action_id, "action_name": action_name, **self.status()}
 
     @staticmethod
     def _fsm_id(client) -> int:
@@ -288,6 +393,8 @@ class RobotControlService:
 
         details: _typing38.Dict[str, object] = {}
         try:
+            if action not in {"stop", "disable", "stance", "zero_torque", "crankshaft_stop"}:
+                self._require_arm_ready()
             client = self._client_instance()
 
             polishing_active = bool(
@@ -439,6 +546,7 @@ class RobotControlService:
             raise RobotControlBusyError("Another robot control command is running.")
 
         try:
+            self._require_arm_ready()
             client = self._client_instance()
             self._require_locomotion(client)
             code = client.SetVelocity(vx, vy, omega, duration_seconds)

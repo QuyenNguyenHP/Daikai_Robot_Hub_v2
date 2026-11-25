@@ -2,6 +2,7 @@ import drumsLogo from '../../photos/DRUMS_logo.png'
 
 
 const NAV_ITEMS = [
+  ['monitor', 'Robot Monitor'],
   ['console', 'Console'],
   ['teleoperation', 'Teleoperation'],
   ['object-distance', 'Autonomous Walk'],
@@ -12,13 +13,14 @@ const NAV_ITEMS = [
 export function AppHeader({ currentPage, health, onNavigate }) {
   return (
     <header className="topbar">
-      <button className="brand" onClick={() => onNavigate('console')}>
+      <button className="brand" onClick={() => onNavigate('monitor')}>
         <img className="brand-mark" src={drumsLogo} alt="" aria-hidden="true" />
         <span>DAIKAI<small>ROBOT HUB</small></span>
       </button>
-      <nav>
+      <nav aria-label="Main navigation">
         {NAV_ITEMS.map(([page, label]) => (
           <button
+            aria-current={currentPage === page ? 'page' : undefined}
             className={currentPage === page ? 'active' : ''}
             key={page}
             onClick={() => onNavigate(page)}

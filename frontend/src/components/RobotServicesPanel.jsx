@@ -1,3 +1,4 @@
+import { HudIcon } from './HudIcon'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getRobotServices, switchRobotService } from '../services/api'
 
@@ -73,7 +74,7 @@ export function RobotServicesPanel() {
             aria-label="Refresh robot services"
             title="Refresh robot services"
           >
-            ↻
+            <HudIcon name="refresh" />
           </button>
         </div>
       </div>

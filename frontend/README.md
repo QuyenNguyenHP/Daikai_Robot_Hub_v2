@@ -106,3 +106,47 @@ npm run build
 
 For a larger application, React Router can replace the current small
 state-based navigation without changing the existing page components.
+
+
+## Robot Monitor / HUD theme
+
+The default **Robot Monitor** page adapts the root `index.html` HUD reference
+using Inter, JetBrains Mono, cyan accents, translucent navy panels, and the same
+theme variables used by Console, Teleoperation, Autonomous Walk and System
+Services. The original reference file is preserved.
+
+`MonitorPage` is loaded separately so Three.js is not bundled into the control
+pages. `RobotModel` loads an optimized indexed GLB through Vite's asset pipeline.
+The original root `R1_full_robot.stl` is preserved, but is not downloaded by the
+web viewer. The GLB is 1,760,452 bytes / 79,997 triangles, compared with the
+31,407,184-byte / 628,142-triangle STL (94.4% fewer bytes, 87.3% fewer triangles).
+Geometry is fetched and decoded once per page session; viewer instances clone
+it so navigation cleanup does not invalidate the cache. Rendering is capped at
+30 fps, runs only when controls or telemetry change, and pauses when the tab is
+hidden or the model is outside the viewport. Compass ticks use one instanced
+draw call and device pixel ratio is capped at 1.5. Drag to orbit,
+scroll/pinch to zoom, use **Reset view**, or toggle **Wireframe**. WebGL is
+required for 3D; the telemetry panels work independently.
+
+The HUD subscribes to the existing battery and IMU WebSockets. It shows actual
+cell voltages from BMS, body orientation from Unitree W/X/Y/Z quaternion data,
+angular velocity, acceleration and temperature. Battery charts keep the latest
+60 seconds while the page is open, each with its own labelled units and scale.
+No simulated readings are generated. Closed/stalled WebSockets and stale DDS
+readings display offline values; the model holds the last attitude dimmed.
+
+The STL is a single rigid mesh. Body attitude follows IMU, while individual
+joints are not animated. This page sends no robot movement commands.
+
+
+To regenerate the model after replacing the source STL:
+
+```bash
+python3 -m pip install trimesh==5.2.2 fast-simplification==0.2.0
+python3 tools/optimize_robot_model.py
+```
+
+These are build tools, not backend runtime dependencies. The asset metadata is
+in `src/assets/r1-monitor.json`. Check the actual GLB loader and cache without
+WebGL using `node frontend/scripts/check-robot-model.mjs` from the repository
+root. This check does not measure browser frame rate.

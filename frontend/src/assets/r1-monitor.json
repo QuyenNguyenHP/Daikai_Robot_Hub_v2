@@ -1,0 +1,23 @@
+{
+  "source": "R1_full_robot.stl",
+  "source_sha256": "1aa90a4dc466c85cbf5a84fcdfa8ddbf1e69d73d0aedc3a07a171f83e62f00b0",
+  "source_bytes": 31407184,
+  "source_triangles": 628142,
+  "asset": "r1-monitor.glb",
+  "asset_bytes": 1760452,
+  "triangles": 79997,
+  "vertices": 33313,
+  "bounds_metres": [
+    [
+      -0.06576275030838576,
+      -0.18128021165921993,
+      -0.0010951276193735084
+    ],
+    [
+      0.30370088422771624,
+      0.18096725349491896,
+      1.2290463352787517
+    ]
+  ],
+  "trimesh": "5.2.2"
+}

@@ -1,3 +1,4 @@
+import { HudIcon } from './HudIcon'
 import { useEffect, useRef, useState } from 'react'
 import {
   controlRobot,
@@ -8,14 +9,14 @@ import SliderSizes from './SliderSizes'
 
 
 const MOVEMENT_BUTTONS = [
-  ['turn_left', '↶', 'Turn left'],
-  ['forward', '↑', 'Forward'],
-  ['turn_right', '↷', 'Turn right'],
-  ['left', '←', 'Move left'],
-  ['stop', '■', 'Stop'],
-  ['right', '→', 'Move right'],
+  ['turn_left', 'turnLeft', 'Turn left'],
+  ['forward', 'up', 'Forward'],
+  ['turn_right', 'turnRight', 'Turn right'],
+  ['left', 'left', 'Move left'],
+  ['stop', 'stop', 'Stop'],
+  ['right', 'right', 'Move right'],
   [null, '', ''],
-  ['backward', '↓', 'Backward'],
+  ['backward', 'down', 'Backward'],
   [null, '', ''],
 ]
 const MOVEMENT_ACTIONS = new Set(
@@ -135,10 +136,11 @@ export function RobotControlPanel() {
   const locomotionActive = isLocomotionMode && !controlLocked
   const canToggleStanceMode = isZeroTorqueMode || isStanceMode || isLocomotionMode
   const stanceModeAction = isStanceMode ? 'zero_torque' : 'stance'
-  const commandDisabled = !configured || !locomotionActive || Boolean(busyAction)
+  const armActionCoolingDown = (status?.arm_action_cooldown_seconds || 0) > 0
+  const commandDisabled = !configured || !locomotionActive || Boolean(busyAction) || status?.busy || armActionCoolingDown
   const polishingActive = Boolean(status?.polishing_active)
   const polishingReady = mode?.fsm_id === 811
-  const actionUnavailable = !configured || Boolean(busyAction) || polishingActive
+  const actionUnavailable = !configured || Boolean(busyAction) || status?.busy || armActionCoolingDown || polishingActive
   const canLieToStand = [0, 1].includes(mode?.fsm_id)
   const canStandToLie = [811, 816].includes(mode?.fsm_id)
 
@@ -237,12 +239,12 @@ export function RobotControlPanel() {
                 type="button"
                 className={`movement-button ${action === 'stop' ? 'stop' : ''}`}
                 key={action}
-                disabled={commandDisabled}
+                disabled={action === 'stop' ? !configured || !locomotionActive || Boolean(busyAction) : commandDisabled}
                 onClick={() => send(action)}
                 title={label}
                 aria-label={label}
               >
-                <strong>{symbol}</strong>
+                <strong><HudIcon name={symbol} /></strong>
                 <span>{label}</span>
               </button>
             ) : <span key={`moving-empty-${index}`} />
@@ -256,7 +258,7 @@ export function RobotControlPanel() {
           <button
             type="button"
             className={`button ${polishingActive ? 'danger' : 'secondary'}`}
-            disabled={!configured || Boolean(busyAction) || (!polishingReady && !polishingActive)}
+            disabled={!configured || Boolean(busyAction) || (armActionCoolingDown && !polishingActive) || (!polishingReady && !polishingActive)}
             onClick={() => setShowPolishingDialog(true)}
           >
             {polishingActive ? 'Crankshaft running' : 'Crankshaft polishing'}

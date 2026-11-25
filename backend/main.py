@@ -18,8 +18,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from backend.face_enrollment import (
+    FaceEnrollmentService, FaceEnrollmentError, MAX_FILES, MAX_IMAGE_BYTES, MAX_UPLOAD_BYTES,
+)
 
 from backend.robot_battery import RobotBatteryService
+from backend.robot_imu import RobotIMUService
 from backend.robot_control import (
     RobotControlBusyError,
     RobotControlError,
@@ -60,8 +67,10 @@ from backend.robot_auto_walk import RobotAutoWalkError, RobotAutoWalkService
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.robot_battery = RobotBatteryService()
+    app.state.robot_imu = RobotIMUService()
     app.state.robot_control = RobotControlService()
     app.state.robot_audio = RobotAudioService()
+    app.state.face_enrollment = FaceEnrollmentService()
     app.state.voice_ai = VoiceAIClient()
     app.state.robot_services = RobotServiceManager()
     app.state.robot_teleoperation = RobotTeleoperationService()
@@ -73,10 +82,12 @@ async def lifespan(app: FastAPI):
         app.state.robot_control,
     )
     app.state.robot_battery.start()
+    app.state.robot_imu.start()
     try:
         yield
     finally:
         app.state.robot_battery.stop()
+        app.state.robot_imu.stop()
         app.state.robot_control.stop()
         app.state.robot_audio.stop()
         app.state.robot_teleoperation.shutdown()
@@ -138,6 +149,8 @@ def video_streaming(request: Request) -> VideoStreamingService:
 
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+    speaker_id: _typing38.Optional[int] = Field(default=None, ge=0, le=4)
+    volume: _typing38.Optional[int] = Field(default=None, ge=0, le=100)
 
 
 class ChatMessage(BaseModel):
@@ -212,6 +225,22 @@ async def robot_battery_status_websocket(websocket: WebSocket) -> None:
         while True:
             await websocket.send_json(battery.status())
             await asyncio.sleep(1.0)
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
+@app.get("/api/robot/imu")
+def robot_imu_status(request: Request) -> _typing38.Dict[str, object]:
+    return request.app.state.robot_imu.status()
+
+
+@app.websocket("/api/robot/imu/ws")
+async def robot_imu_status_websocket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    try:
+        while True:
+            await websocket.send_json(websocket.app.state.robot_imu.status())
+            await asyncio.sleep(0.2)
     except (WebSocketDisconnect, RuntimeError):
         return
 
@@ -410,6 +439,34 @@ async def robot_mode_websocket(websocket: WebSocket) -> None:
         return
 
 
+class ArmActionRequest(BaseModel):
+    action_id: int = Field(ge=0)
+
+
+@app.get("/api/robot/arm-actions")
+def get_arm_actions(request: Request) -> _typing38.Dict[str, object]:
+    try:
+        return robot_control(request).available_arm_actions()
+    except RobotControlBusyError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RobotControlError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/robot/arm-actions/execute")
+def execute_arm_action(request: Request, payload: ArmActionRequest) -> _typing38.Dict[str, object]:
+    try:
+        if robot_teleoperation(request).status().get("running"):
+            raise RobotControlBusyError("Stop teleoperation before sending an arm action.")
+        if request.app.state.robot_auto_walk.status().get("running"):
+            raise RobotControlBusyError("Stop autonomous walking before sending an arm action.")
+        return robot_control(request).execute_arm_action(payload.action_id)
+    except (RobotControlBusyError, RobotControlStateError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RobotControlError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
 @app.post("/api/robot/control")
 def control_robot(request: Request, payload: ControlRequest) -> _typing38.Dict[str, object]:
     try:
@@ -433,11 +490,63 @@ def robot_speech_status(request: Request) -> _typing38.Dict[str, object]:
 @app.post("/api/robot/speak")
 def speak_on_robot(request: Request, payload: SpeechRequest) -> _typing38.Dict[str, object]:
     try:
-        return robot_audio(request).speak(payload.text)
+        return robot_audio(request).speak(payload.text, speaker_id=payload.speaker_id, volume=payload.volume)
     except RobotAudioBusyError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except RobotAudioError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/vision/people")
+def enrolled_people(request: Request) -> _typing38.Dict[str, object]:
+    try:
+        return request.app.state.face_enrollment.people()
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"Could not load the face database: {error}") from error
+
+
+@app.post("/api/vision/enroll")
+async def enroll_face(request: Request) -> _typing38.Dict[str, object]:
+    # Bound the multipart body, including chunked uploads, before parsing it.
+    received = 0
+
+    async def limited_receive():
+        nonlocal received
+        message = await request.receive()
+        received += len(message.get("body", b""))
+        if received > MAX_UPLOAD_BYTES + 256 * 1024:
+            raise HTTPException(status_code=413, detail="The total photo upload must be at most 25 MB.")
+        return message
+
+    bounded = Request(request.scope, receive=limited_receive)
+    try:
+        async with bounded.form(max_files=MAX_FILES, max_fields=1) as form:
+            raw_name = form.get("name")
+            if not isinstance(raw_name, str):
+                raise FaceEnrollmentError("Enter a name for this person.")
+            name = FaceEnrollmentService.normalize_name(raw_name)
+            files = form.getlist("images")
+            if not files or len(files) > MAX_FILES or any(not isinstance(file, UploadFile) for file in files):
+                raise FaceEnrollmentError("Choose 1–10 photos to register.")
+            images = []
+            total = 0
+            for file in files:
+                if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                    raise FaceEnrollmentError("Use JPG, PNG or WebP photos.")
+                payload = await file.read(MAX_IMAGE_BYTES + 1)
+                if len(payload) > MAX_IMAGE_BYTES:
+                    raise HTTPException(status_code=413, detail=f"Photo {file.filename} exceeds 5 MB.")
+                total += len(payload)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="The total photo upload must be at most 25 MB.")
+                images.append((file.filename or "photo", payload))
+        return await run_in_threadpool(request.app.state.face_enrollment.enroll, name, images)
+    except FaceEnrollmentError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except StarletteHTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"Face registration unavailable: {error}") from error
 
 
 @app.get("/api/robot/voice-chat/status")

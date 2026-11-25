@@ -414,3 +414,93 @@ which python
 python --version
 python -c "import fastapi, cv2; from unitree_sdk2py.go2.video.video_client import VideoClient; print('OK')"
 ```
+
+
+## Console IMU and Vision
+
+The console subscribes to `/api/robot/imu/ws` (5 updates/second). The backend
+reads `unitree_hg/LowState_` on `rt/lowstate`, configurable with
+`UNITREE_IMU_TOPIC`, using `UNITREE_NETWORK_INTERFACE`. Readings include RPY
+converted from radians to degrees, gyro in rad/s, acceleration in m/s²,
+quaternion in W/X/Y/Z order, and temperature in °C. Stale or disconnected
+readings are hidden by the console. `GET /api/robot/imu` returns the same payload.
+
+Vision uses the existing stereo detection endpoints, with YOLO-World restricted
+to `person`. It adds YuNet face detection and SFace recognition against
+`data/embeddings.npz`. Names below the cosine similarity threshold are shown as
+`Unknown`; the default threshold is 0.363 (`VISION_FACE_THRESHOLD`).
+Face inference runs at the same interval as person detection. Vision reloads
+the local database automatically when it changes. Restart Vision after changing
+model settings.
+
+Install the face models before using recognition:
+
+```bash
+python3 -m backend.download_models
+```
+
+The backend OpenCV build must provide `FaceDetectorYN` and `FaceRecognizerSF`
+(OpenCV 4.8+ recommended for the 2023 YuNet model); keep the Jetson-specific
+OpenCV installation used by stereo. NumPy is also required by both pipelines.
+Override paths with `VISION_FACE_MODELS_DIR` and `VISION_FACE_DATABASE`.
+Downloaded models are local assets excluded from Git. If face recognition
+cannot initialize, person detection continues and the console shows the error.
+The depth views and autonomous-walking depth consumers retain their existing
+stereo processing.
+
+## Firmware arm actions
+
+The console's **Robot actions** box follows
+`unitree_sdk2_python/my_script/r1_action.py`: it uses `G1ArmActionClient` with
+the R1 firmware's `arm` service. `GET /api/robot/arm-actions` recursively reads
+`GetActionList()` and returns every advertised ID/name. The UI creates a line-icon
+button for each result, with **Refresh** to reload the list. It uses the firmware
+IDs rather than the SDK's static G1 gesture map (`clamp` is displayed as Clap).
+
+`POST /api/robot/arm-actions/execute` accepts `{"action_id": 7}`. The backend
+checks current FSM **811**, reloads the firmware action list, validates the ID,
+and calls `ExecuteAction`. It does not automatically change modes. Commands
+share the locomotion lock and are rejected during polishing, teleoperation, or
+autonomous walking. After dispatch, a 5-second cooldown prevents another action
+or normal movement command; stop and stance/zero-torque commands remain
+available. Acceptance is reported separately from completion because the arm
+service has no completion event. Tests mock the robot clients and never send
+physical action commands.
+
+
+## Console Text to Speech and photo registration
+
+The **Text to Speech** box calls the robot's native `AudioClient.TtsMaker`, as
+in `reference_script/text_to_robot.py`. It has a 200-character message field,
+the backend’s default voice, and volume 0–100 (UI default 70). Language support
+is determined by firmware. `POST /api/robot/speak` accepts optional `speaker_id`
+and `volume` along with `text`. Omitting options preserves the existing server
+defaults. A success response indicates RPC acceptance, not completed playback.
+
+In **Vision**, click **Register face** to open photo enrollment. Enter a name
+and select 1–10 JPG, PNG or WebP photos (5 MB each, 25 MB total). Each accepted
+photo must have exactly one detectable face. Results report accepted photos
+and individual rejection reasons. Samples are appended to the existing
+`VISION_FACE_DATABASE` archive; other people and previous samples are preserved.
+Only embeddings are persisted by enrollment. Original uploaded photos are not
+saved. `GET /api/vision/people` lists names and embedding counts;
+`POST /api/vision/enroll` accepts multipart `name` and repeated `images` fields.
+
+Enrollment runs in a worker thread with its own YuNet/SFace instances. Database
+updates use a shared lock and atomic replacement; live Vision reloads the new
+embeddings without restarting the stream. Install `python-multipart` from the
+requirements file for uploads. Tests use temporary databases and mocked robot
+clients, leaving real identities and robot audio untouched.
+
+
+## Vision model startup cache
+
+The stereo service retains its prepared YOLO-World model, text encoder and
+predictor, and the live face-recognition models between stream start/stop
+cycles. The first start still imports libraries and initializes model weights.
+Later starts reuse them within the same backend process. Changes to weight file
+mtime/size, device, or prompts invalidate the detector cache. This trades
+retained RAM/VRAM for quicker restarts; restarting the backend clears the cache.
+No inference resolution, thresholds, calibration or model weights were changed
+by this optimization. `detection_model_cached` in stereo status reports whether
+a detector has already been loaded.

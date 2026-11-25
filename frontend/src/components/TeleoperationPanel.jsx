@@ -1,3 +1,4 @@
+import { HudIcon } from './HudIcon'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getRobotModeWebSocketUrl,
@@ -201,7 +202,7 @@ export function TeleoperationPanel() {
             <strong>{notification.type === 'started' ? 'XR session update' : 'Session ended'}</strong>
             <span>{notification.message}</span>
           </div>
-          <button type="button" aria-label="Dismiss notification" onClick={() => setNotification(null)}>×</button>
+          <button type="button" aria-label="Dismiss notification" onClick={() => setNotification(null)}><HudIcon name="close" /></button>
         </div>
       )}
 

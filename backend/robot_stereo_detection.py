@@ -17,7 +17,7 @@ from typing import Iterator
 
 BACKEND_DIR = Path(__file__).resolve().parent
 REFERENCE_DIR = BACKEND_DIR / "r1_yolo_world_stereo"
-DEFAULT_CLASSES = "person,chair,bottle,cup,table,door,box"
+DEFAULT_CLASSES = "person"
 
 # ---------------------------------------------------------------------------
 # USER SETTINGS — CENTER CLEARANCE REGION (PIXELS)
@@ -254,6 +254,10 @@ class RobotStereoDetectionService:
         self.detect_every = _env_int("R1_YOLO_DETECT_EVERY", 2)
         self.device = os.getenv("R1_YOLO_DEVICE", "cuda:0").strip() or "cuda:0"
         self._device_name = None
+        self._cached_model = None
+        self._cached_model_key = None
+        self._cached_device_name = None
+        self._cached_faces = None
         self.num_disparities = _env_int("R1_STEREO_NUM_DISPARITIES", 64, 16)
         self.num_disparities = max(16, (self.num_disparities // 16) * 16)
         self.block_size = _env_int("R1_STEREO_BLOCK_SIZE", 3, 3)
@@ -302,6 +306,8 @@ class RobotStereoDetectionService:
         self._error: _typing38.Union[str, None] = None
         self._last_frame_at: _typing38.Union[float, None] = None
         self._detections: _typing38.List[_typing38.Dict[str, object]] = []
+        self._faces = []
+        self._face_error = None
         self._fps = 0.0
         self._stereo_ms = 0.0
         self._yolo_ms = 0.0
@@ -356,6 +362,8 @@ class RobotStereoDetectionService:
                 "depth": None,
             }
             self._detections = []
+            self._faces = []
+            self._face_error = None
             self._last_frame_at = None
             self._fps = self._stereo_ms = self._yolo_ms = self._pair_delta_ms = 0.0
             self._device_name = None
@@ -416,6 +424,8 @@ class RobotStereoDetectionService:
             self._condition.notify_all()
 
     def set_classes(self, prompts: _typing38.List[str]) -> _typing38.Dict[str, object]:
+        if [p.strip().casefold() for p in prompts] != ["person"]:
+            raise RobotStereoError("Vision supports person detection only.")
         normalized = []
         seen = set()
         for prompt in prompts:
@@ -459,6 +469,54 @@ class RobotStereoDetectionService:
             self._error = message
             self._condition.notify_all()
 
+    def _create_detection_model(self):
+        import torch
+
+        device = torch.device(
+            "cuda:" + self.device if self.device.isdigit() else self.device
+        )
+        if device.type not in {"cuda", "cpu"}:
+            raise RobotStereoError(
+                "R1_YOLO_DEVICE must be cuda:0, a GPU index, or cpu."
+            )
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RobotStereoError(
+                "CUDA is unavailable. Install a CUDA-enabled PyTorch build matching "
+                "your JetPack and Python versions. CPU is only used if "
+                "R1_YOLO_DEVICE=cpu."
+            )
+        self._device_name = (
+            torch.cuda.get_device_name(device)
+            if device.type == "cuda"
+            else "CPU"
+        )
+        try:
+            from ultralytics import YOLOWorld
+        except ImportError as exc:
+            raise RobotStereoError(
+                "Could not import Ultralytics in the Python environment running "
+                f"the backend: {exc}"
+            ) from exc
+        loaded_model = YOLOWorld(str(self.model_path))
+        loaded_model.to(device)
+        _set_model_classes(loaded_model, self.prompts, self.source_dir, device)
+        return loaded_model
+
+    def _detection_model(self):
+        # Only the stereo worker uses this model. Retain its prepared text
+        # encoder and predictor across start/stop cycles in this backend process.
+        info = self.model_path.stat()
+        key = (str(self.model_path.resolve()), info.st_mtime_ns, info.st_size,
+               self.device, tuple(self.prompts))
+        if self._cached_model is None or key != self._cached_model_key:
+            model = self._create_detection_model()
+            self._cached_model = model
+            self._cached_model_key = key
+            self._cached_device_name = self._device_name
+        else:
+            self._device_name = self._cached_device_name
+        return self._cached_model
+
     def _run(self) -> None:
         capture = None
         try:
@@ -470,39 +528,6 @@ class RobotStereoDetectionService:
             geometry = common.StereoGeometry(self.calibration_path)
             matcher = common.create_sgbm(self.num_disparities, self.block_size)
             model = None
-
-            def load_detection_model():
-                import torch
-
-                device = torch.device(
-                    "cuda:" + self.device if self.device.isdigit() else self.device
-                )
-                if device.type not in {"cuda", "cpu"}:
-                    raise RobotStereoError(
-                        "R1_YOLO_DEVICE must be cuda:0, a GPU index, or cpu."
-                    )
-                if device.type == "cuda" and not torch.cuda.is_available():
-                    raise RobotStereoError(
-                        "CUDA is unavailable. Install a CUDA-enabled PyTorch build matching "
-                        "your JetPack and Python versions. CPU is only used if "
-                        "R1_YOLO_DEVICE=cpu."
-                    )
-                self._device_name = (
-                    torch.cuda.get_device_name(device)
-                    if device.type == "cuda"
-                    else "CPU"
-                )
-                try:
-                    from ultralytics import YOLOWorld
-                except ImportError as exc:
-                    raise RobotStereoError(
-                        "Could not import Ultralytics in the Python environment running "
-                        f"the backend: {exc}"
-                    ) from exc
-                loaded_model = YOLOWorld(str(self.model_path))
-                loaded_model.to(device)
-                _set_model_classes(loaded_model, self.prompts, self.source_dir, device)
-                return loaded_model
 
             self._device_name = "depth only"
             capture = common.StereoRtpCapture(
@@ -545,6 +570,9 @@ class RobotStereoDetectionService:
         frame_index = 0
         cached_detections: _typing38.List[_typing38.Tuple[int, int, int, int, str, float]] = []
         last_yolo_ms = 0.0
+        face_service = None
+        face_attempted = False
+        cached_faces = []
         try:
             while not self._stop_event.is_set():
                 with self._condition:
@@ -552,7 +580,7 @@ class RobotStereoDetectionService:
                 if detection_active and model is None:
                     with self._condition:
                         self._state = "loading"
-                    model = load_detection_model()
+                    model = self._detection_model()
                 try:
                     left, right, pair_delta_ms = capture.read_pair(
                         timeout_s=2.0,
@@ -563,6 +591,17 @@ class RobotStereoDetectionService:
                         self._state = "waiting"
                         self._error = str(exc)
                     continue
+
+                if detection_active and not face_attempted:
+                    face_attempted = True
+                    try:
+                        from backend.vision_faces import VisionFaces
+                        if self._cached_faces is None:
+                            self._cached_faces = VisionFaces()
+                        face_service = self._cached_faces
+                    except Exception as exc:
+                        with self._condition:
+                            self._face_error = str(exc)
 
                 processing_started = time.monotonic()
                 left_rectified, right_rectified = geometry.rectify(left, right)
@@ -603,6 +642,24 @@ class RobotStereoDetectionService:
                                 float(detection[-2]),
                             )
                         )
+
+                if detection_active and frame_index % self.detect_every == 0:
+                    cached_faces = []
+                    if face_service is not None:
+                        try:
+                            cached_faces = face_service.recognize(left_rectified)
+                            with self._condition:
+                                self._face_error = None
+                        except Exception as exc:
+                            with self._condition:
+                                self._face_error = str(exc)
+
+                for face in cached_faces if detection_active else []:
+                    x1, y1, x2, y2 = face["box"]
+                    color = (80, 190, 255) if face["name"] == "Unknown" else (255, 200, 80)
+                    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                    cv2.putText(annotated, face["name"], (x1, max(20, y1 - 7)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
 
                 disparity, points_3d, depth_ms = depth_future.result()
                 stereo_ms = rectify_ms + depth_ms
@@ -744,6 +801,7 @@ class RobotStereoDetectionService:
                     self._sequence += 1
                     self._last_frame_at = time.time()
                     self._detections = detection_payload
+                    self._faces = cached_faces if detection_active else []
                     self._fps = fps
                     self._stereo_ms = stereo_ms
                     self._yolo_ms = last_yolo_ms
@@ -790,9 +848,12 @@ class RobotStereoDetectionService:
                 "device": self.device,
                 "device_name": self._device_name,
                 "object_detection_enabled": self.enable_object_detection,
+                "detection_model_cached": self._cached_model is not None,
                 "frame_sequence": self._sequence,
                 "last_frame_age_seconds": age,
                 "detections": list(self._detections) if self._state == "connected" else [],
+                "faces": list(self._faces) if self._state == "connected" and "detection" in self._active_views else [],
+                "face_recognition_error": self._face_error,
                 "fps": round(self._fps, 1),
                 "stereo_ms": round(self._stereo_ms, 1),
                 "yolo_ms": round(self._yolo_ms, 1),
