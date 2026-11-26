@@ -615,7 +615,10 @@ class RobotStereoDetectionService:
 
         depth_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stereo-depth")
         from backend.vision_inference import LiveInference
+        from backend.vision_tracking import FlowBoxes
         inference = LiveInference()
+        box_tracker = FlowBoxes()
+        inference_frame = None
         last_inference_at = 0.0
         previous_time = time.monotonic()
         next_frame_at = previous_time
@@ -681,10 +684,26 @@ class RobotStereoDetectionService:
                 completed = inference.poll()
                 if completed is not None:
                     cached_detections, cached_faces, last_yolo_ms, last_inference_at = completed
-                if time.monotonic() - last_inference_at > 1.0:
-                    cached_detections, cached_faces = [], []
+                    items = [(item[:4], ("detection", item[4:])) for item in cached_detections]
+                    items += [(face["box"], ("face", face)) for face in cached_faces]
+                    # An occasional missed detection may keep moving briefly.
+                    # Expiry starts when a result arrives, not when slow AI began.
+                    if items and inference_frame is not None:
+                        box_tracker.reset(inference_frame, items, time.monotonic())
+                tracked = box_tracker.advance(left_rectified)
+                cached_detections, cached_faces = [], []
+                if detection_active:
+                    for box, (kind, payload) in tracked:
+                        if kind == "detection":
+                            cached_detections.append((*box, *payload))
+                        else:
+                            cached_faces.append(dict(payload, box=list(box)))
+                else:
+                    box_tracker.tracks = []
                 if detection_active and model is not None and frame_index % self.detect_every == 0:
-                    inference.submit(self._infer_frame, model, face_service, left_rectified.copy())
+                    candidate = left_rectified.copy()
+                    if inference.submit(self._infer_frame, model, face_service, candidate):
+                        inference_frame = candidate
 
                 for face in cached_faces if detection_active else []:
                     x1, y1, x2, y2 = face["box"]

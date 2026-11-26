@@ -194,6 +194,86 @@ Replace `eth10` with your actual robot network interface. Use `ip -br link` to
 list the available interfaces. SDK2 is optional for local development using
 `python backend/app.py`.
 
+### Optional: Intel RealSense D415 USB camera
+
+If the web interface reports
+`D415 requires pyrealsense2 in the backend Python environment.`, the Python
+running the backend cannot find the RealSense binding. Install it on the
+machine running the backend, in the same environment as the backend and
+Unitree SDK2, rather than the frontend terminal or the separate XR `tv`
+environment.
+
+Stop the backend with **Ctrl+C** before installing. For the project's `.venv`:
+
+```bash
+cd ~/Daikai_Robot_Hub_v2
+source .venv/bin/activate
+which python
+python --version
+python -m pip install pyrealsense2
+```
+
+If your backend uses a different environment, activate that environment instead.
+Keep the JetPack 5 constraints from the section below if using that profile;
+do not upgrade the existing GPU packages to install the camera binding.
+
+On Jetson Orin, a compatible wheel depends on the Python and JetPack versions.
+The current ARM64 wheels are CUDA builds with a Python-to-JetPack mapping;
+check the [official Jetson installation guide](https://github.com/realsenseai/librealsense/blob/master/doc/installation_jetson.md)
+and its linked PyPI compatibility table. If no compatible wheel is available
+(including for an older Python 3.8 deployment), follow the official source-build
+instructions for the backend's interpreter. Do not switch the working backend
+Python or install a wheel for a different JetPack just to satisfy pip.
+
+Connect the D415 to a USB 3 port on the backend host, then check the binding
+and camera discovery from that same environment:
+
+```bash
+python - <<'PY'
+import sys
+import pyrealsense2 as rs
+
+print('Python:', sys.executable)
+print('Driver:', rs.__file__)
+devices = rs.context().query_devices()
+print('Connected cameras:', len(devices))
+for device in devices:
+    print(device.get_info(rs.camera_info.name))
+PY
+```
+
+If the D415 is listed, restart the backend with your usual command, reload the
+frontend, stop active camera views and autonomous modes, then select
+**Intel RealSense D415 (USB)**. Discovery verifies the import and device
+visibility; opening a camera view verifies streaming. If zero cameras are
+listed, check USB cable/port, power, and the SDK's device-permission (udev)
+setup in the official guide.
+
+For `No matching distribution found`, CUDA/shared-library errors, or import
+failures, capture the full error and these version details before choosing a
+wheel or source build:
+
+```bash
+python --version
+python -m pip --version
+uname -m
+cat /etc/nv_tegra_release
+```
+
+If using the systemd service described below, install with its exact interpreter
+and restart the service after installation:
+
+```bash
+sudo systemctl stop daikai-robot-hub.service
+/home/unitree/Daikai_Robot_Hub_v2/.venv/bin/python -m pip install pyrealsense2
+# Run the import/device check above with this interpreter before restarting.
+sudo systemctl start daikai-robot-hub.service
+```
+
+Adjust the path for your service configuration. If installation or verification
+fails, resolve that error before restarting; installing into Conda `base` does
+not make the package available to this service's `.venv`.
+
 ## 4. Set up the frontend
 
 Open a second terminal and run:
@@ -251,20 +331,20 @@ Dừng backend trước khi cài, chạy từng bước và dừng khi gặp l�
 
 ### Mục đích các thành phần
 
-| Thành phần | Vì sao cần |
-| --- | --- |
-| `python3.8-venv` | Tạo môi trường riêng có pip; sửa lỗi thiếu `ensurepip`. |
-| `python3.8-dev`, `build-essential` | Header Python và compiler để build extension native. |
-| `wheel`, `setuptools`, `pip` | Công cụ đóng gói và build; thiếu `wheel` gây `invalid command 'bdist_wheel'` khi dùng `--no-build-isolation`. |
-| `ninja-build` | Backend build giúp giới hạn tác vụ bằng `MAX_JOBS`, giảm nguy cơ hết RAM khi build torchvision. |
-| CUDA toolkit / `nvcc` | Biên dịch extension CUDA của torchvision; torch nhận GPU chưa chứng minh có compiler CUDA. |
-| NVIDIA PyTorch | Chạy inference trên GPU với binary phù hợp JetPack; không thay bằng `pip install torch` thông thường. |
-| torchvision build từ source | Cung cấp toán tử CUDA như NMS tương thích với NVIDIA torch đang dùng. |
-| NumPy 1.24.4 và constraints | Giữ bộ phiên bản phù hợp profile Python 3.8, tránh pip thay torch/torchvision bằng binary khác. |
-| JPEG, zlib, OpenBLAS | Thư viện native hỗ trợ ảnh và tính toán cho bộ dependency. |
-| GStreamer và plugins | Nhận/giải mã video stereo; ứng dụng dùng `gst-launch-1.0` khi pip OpenCV không có GStreamer. |
-| Ultralytics và OpenAI CLIP | Chạy YOLO-World và mã hóa nhãn văn bản tùy chỉnh. |
-| Unitree SDK2 + Cyclone DDS | Giao tiếp với robot; đây là lớp riêng với xử lý GPU. |
+| Thành phần                           | Vì sao cần                                                                                                                 |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `python3.8-venv`                     | Tạo môi trường riêng có pip; sửa lỗi thiếu `ensurepip`.                                                           |
+| `python3.8-dev`, `build-essential` | Header Python và compiler để build extension native.                                                                      |
+| `wheel`, `setuptools`, `pip`     | Công cụ đóng gói và build; thiếu `wheel` gây `invalid command 'bdist_wheel'` khi dùng `--no-build-isolation`. |
+| `ninja-build`                        | Backend build giúp giới hạn tác vụ bằng `MAX_JOBS`, giảm nguy cơ hết RAM khi build torchvision.                   |
+| CUDA toolkit / `nvcc`                | Biên dịch extension CUDA của torchvision; torch nhận GPU chưa chứng minh có compiler CUDA.                            |
+| NVIDIA PyTorch                         | Chạy inference trên GPU với binary phù hợp JetPack; không thay bằng `pip install torch` thông thường.            |
+| torchvision build từ source           | Cung cấp toán tử CUDA như NMS tương thích với NVIDIA torch đang dùng.                                              |
+| NumPy 1.24.4 và constraints           | Giữ bộ phiên bản phù hợp profile Python 3.8, tránh pip thay torch/torchvision bằng binary khác.                     |
+| JPEG, zlib, OpenBLAS                   | Thư viện native hỗ trợ ảnh và tính toán cho bộ dependency.                                                          |
+| GStreamer và plugins                  | Nhận/giải mã video stereo; ứng dụng dùng `gst-launch-1.0` khi pip OpenCV không có GStreamer.                       |
+| Ultralytics và OpenAI CLIP            | Chạy YOLO-World và mã hóa nhãn văn bản tùy chỉnh.                                                                   |
+| Unitree SDK2 + Cyclone DDS             | Giao tiếp với robot; đây là lớp riêng với xử lý GPU.                                                               |
 
 ### 1. Công cụ hệ thống và công cụ build Python
 
@@ -348,11 +428,11 @@ khi cập nhật bằng `git pull`.
 Giữ constraints khi cài thêm package trong profile này. Các file cần có dưới
 `backend/r1_yolo_world_stereo/`:
 
-| File | Mục đích |
-| --- | --- |
-| `yolov8s-worldv2.pt` | Checkpoint YOLO-World dùng để phát hiện vật thể trong ảnh. |
-| `r1_stereo_calibration.npz` | Thông số hiệu chỉnh đúng cặp camera để xử lý stereo và tính khoảng cách. |
-| `weights/clip/ViT-B-32.pt` | Trọng số CLIP mã hóa nhãn văn bản cho custom prompt; không dùng để hiệu chỉnh camera hay tính khoảng cách. |
+| File                          | Mục đích                                                                                                                |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `yolov8s-worldv2.pt`        | Checkpoint YOLO-World dùng để phát hiện vật thể trong ảnh.                                                         |
+| `r1_stereo_calibration.npz` | Thông số hiệu chỉnh đúng cặp camera để xử lý stereo và tính khoảng cách.                                    |
+| `weights/clip/ViT-B-32.pt`  | Trọng số CLIP mã hóa nhãn văn bản cho custom prompt; không dùng để hiệu chỉnh camera hay tính khoảng cách. |
 
 CLIP cache không nằm trong Git. Copy từ deployment cũ hoặc chạy kiểm tra
 custom prompt khi có internet để tải trước khi đưa Jetson offline. Nếu muốn
@@ -404,17 +484,17 @@ nhưng vẫn cần modules và robot assets từ repo Unitree `xr_teleoperate`.
 
 ### Những thành phần bắt buộc
 
-| Thành phần | Mục đích |
-| --- | --- |
-| Miniconda Linux aarch64 tại `/home/unitree/miniconda3` | Cung cấp môi trường XR độc lập trên Jetson ARM64. |
-| Conda environment `tv`, Python 3.10 | Runtime cho XR; không thay `.venv` Python 3.8 đang dùng stereo. |
-| `xr_teleoperate` và submodules | Controller R1, inverse kinematics, URDF/mesh assets, IPC và XR transport. |
-| Pinocchio 3.1.0 | Tính động học robot / inverse kinematics. |
-| `televuer` và HTTPS certificate | Nhận pose tay/controller từ kính XR qua kết nối bảo mật. |
-| `teleimager`, `libjpeg-turbo` | Thư viện camera XR; bản script đã sửa chỉ import API camera cũ khi bật image server. |
-| Unitree SDK2 + Cyclone DDS trong `tv` | Gửi lệnh robot từ subprocess; bản cài trong `.venv` không tự xuất hiện trong Conda. |
-| `pyzmq` ở backend và `tv` | Kết nối nút Start/Stop trên web với tiến trình XR qua IPC. |
-| Kính XR hỗ trợ và kết nối mạng tới Jetson | Nguồn dữ liệu hand/controller tracking; trang web Robot Hub không tự tạo pose XR. |
+| Thành phần                                              | Mục đích                                                                                    |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Miniconda Linux aarch64 tại `/home/unitree/miniconda3` | Cung cấp môi trường XR độc lập trên Jetson ARM64.                                      |
+| Conda environment `tv`, Python 3.10                     | Runtime cho XR; không thay `.venv` Python 3.8 đang dùng stereo.                           |
+| `xr_teleoperate` và submodules                         | Controller R1, inverse kinematics, URDF/mesh assets, IPC và XR transport.                     |
+| Pinocchio 3.1.0                                           | Tính động học robot / inverse kinematics.                                                  |
+| `televuer` và HTTPS certificate                        | Nhận pose tay/controller từ kính XR qua kết nối bảo mật.                                |
+| `teleimager`, `libjpeg-turbo`                         | Thư viện camera XR; bản script đã sửa chỉ import API camera cũ khi bật image server.  |
+| Unitree SDK2 + Cyclone DDS trong `tv`                   | Gửi lệnh robot từ subprocess; bản cài trong `.venv` không tự xuất hiện trong Conda. |
+| `pyzmq` ở backend và `tv`                           | Kết nối nút Start/Stop trên web với tiến trình XR qua IPC.                              |
+| Kính XR hỗ trợ và kết nối mạng tới Jetson         | Nguồn dữ liệu hand/controller tracking; trang web Robot Hub không tự tạo pose XR.        |
 
 Hướng dẫn nguồn: [Unitree xr_teleoperate](https://github.com/unitreerobotics/xr_teleoperate#1--installation).
 Profile này chưa được xác minh trên phần cứng từ workspace này. Dùng revision
@@ -549,7 +629,6 @@ BrainCo) hoặc recording cần cài thêm theo revision upstream nếu bật c�
 Sau đó chạy backend trong `.venv` Python 3.8 như bình thường với các biến DDS và
 certificate, dùng bảng Teleoperation trên web để launch và bắt đầu tracking.
 Không chạy thêm một instance điều khiển XR song song.
-
 
 ### Sửa lỗi `No module named teleimager.image_client`
 

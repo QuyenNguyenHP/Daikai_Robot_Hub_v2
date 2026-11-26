@@ -711,7 +711,7 @@ cd /home/unitree/Daikai_Robot_Hub_v2
 
 export FR_CORS_ORIGINS=http://192.168.0.75:5173,http://localhost:5173,http://127.0.0.1:5173
 
-python3 -m backend eth10 --host 0.0.0.0 --port 8000
+python3 -m backend enp4s0 --host 0.0.0.0 --port 8010
 ```
 
 Tham số `eth10` cấu hình network interface kết nối robot cho Unitree SDK.
