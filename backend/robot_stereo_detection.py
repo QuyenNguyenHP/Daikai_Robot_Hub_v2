@@ -230,6 +230,7 @@ class RobotStereoDetectionService:
 
     def __init__(self, *, enable_object_detection: bool = True) -> None:
         self.enable_object_detection = enable_object_detection
+        self.camera_source = "stereo"
         self.source_dir = Path(os.getenv("R1_STEREO_SOURCE_DIR", str(REFERENCE_DIR)))
         self.calibration_path = Path(
             os.getenv(
@@ -252,6 +253,7 @@ class RobotStereoDetectionService:
         self.confidence = min(_env_float("R1_YOLO_CONFIDENCE", 0.25), 1.0)
         self.image_size = _env_int("R1_YOLO_IMAGE_SIZE", 416)
         self.detect_every = _env_int("R1_YOLO_DETECT_EVERY", 2)
+        self.max_fps = 20.0
         self.device = os.getenv("R1_YOLO_DEVICE", "cuda:0").strip() or "cuda:0"
         self._device_name = None
         self._cached_model = None
@@ -301,6 +303,8 @@ class RobotStereoDetectionService:
             "right": None,
             "depth": None,
         }
+        self._frame_size = None
+        self._depth_sequence = 0
         self._sequence = 0
         self._state = "stopped"
         self._error: _typing38.Union[str, None] = None
@@ -326,10 +330,12 @@ class RobotStereoDetectionService:
                 "CENTER_CLEARANCE_WIDTH/HEIGHT must define a positive region "
                 f"inside the {self.width}x{self.height} stereo frame."
             )
+        if self.camera_source == "d415" and importlib.util.find_spec("pyrealsense2") is None:
+            return "D415 requires pyrealsense2 in the backend Python environment."
         common_path = self.source_dir / "r1_stereo_common.py"
-        if not common_path.is_file():
+        if self.camera_source == "stereo" and not common_path.is_file():
             return f"Stereo reference module not found: {common_path}"
-        if not self.calibration_path.is_file():
+        if self.camera_source == "stereo" and not self.calibration_path.is_file():
             return f"Stereo calibration not found: {self.calibration_path}"
         needs_detection = self.enable_object_detection and view != "depth"
         if needs_detection and not self.model_path.is_file():
@@ -338,15 +344,36 @@ class RobotStereoDetectionService:
             return "R1_YOLO_WORLD_CLASSES must contain at least one class."
         return None
 
+    def set_camera_source(self, source: str) -> None:
+        if source not in {"stereo", "d415"}:
+            raise RobotStereoError("Unknown camera source.")
+        with self._condition:
+            if source == self.camera_source:
+                return
+            if self._depth_consumers or (self._thread is not None and self._thread.is_alive()):
+                raise RobotStereoStateError("Stop all camera views and autonomous walking before changing camera.")
+            self.camera_source = source
+            self._frame_size = None
+            self._frames = dict.fromkeys(self._frames)
+            self._last_frame_at = None
+            self._obstacle_distance_m = None
+            self._detections = []
+            self._faces = []
+            self._baseline_m = None
+            self._error = None
+            self._state = "stopped"
+
     def start(self, view: _typing38.Union[str, None] = None, *, visible: bool = True) -> None:
         with self._condition:
             if view not in (None, "detection", "left", "right", "depth"):
                 raise RobotStereoError(f"Unknown stereo view: {view}")
+            if self._thread is not None and self._thread.is_alive() and self._stop_event.is_set():
+                raise RobotStereoStateError("Camera is still stopping; wait briefly before starting it again.")
             if visible:
                 if view == "depth":
                     self._active_views.update(("left", "depth"))
                 else:
-                    self._active_views.update(("detection", "depth") if view is None else (view,))
+                    self._active_views.update(("detection",) if view is None else (view,))
             if self._thread is not None and self._thread.is_alive():
                 self._condition.notify_all()
                 return
@@ -409,19 +436,9 @@ class RobotStereoDetectionService:
         with self._condition:
             self._depth_consumers.discard(name)
             should_stop = not self._depth_consumers and not self._active_views
-        if should_stop:
-            self.stop()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=30.0)
-        with self._condition:
-            if thread is not None and thread.is_alive():
-                self._state = "stopping"
-                self._error = "Stereo detection is still stopping; try again shortly."
-            else:
-                self._state = "stopped"
-                self._error = None
-            self._condition.notify_all()
+        if not should_stop:
+            return
+        self.stop()
 
     def set_classes(self, prompts: _typing38.List[str]) -> _typing38.Dict[str, object]:
         if [p.strip().casefold() for p in prompts] != ["person"]:
@@ -517,6 +534,31 @@ class RobotStereoDetectionService:
             self._device_name = self._cached_device_name
         return self._cached_model
 
+    def _infer_frame(self, model, face_service, frame):
+        options = {"conf": self.confidence, "imgsz": self.image_size, "verbose": False}
+        if self.device is not None:
+            options["device"] = self.device
+        started = time.monotonic()
+        result = model.predict(frame, **options)[0]
+        yolo_ms = (time.monotonic() - started) * 1000.0
+        detections = []
+        height, width = frame.shape[:2]
+        for detection in result.boxes.data.detach().cpu().tolist():
+            x1, y1, x2, y2 = (int(value) for value in detection[:4])
+            x1, y1 = max(0, min(width - 1, x1)), max(0, min(height - 1, y1))
+            x2, y2 = max(x1 + 1, min(width, x2)), max(y1 + 1, min(height, y2))
+            detections.append((x1, y1, x2, y2, str(result.names[int(detection[-1])]), float(detection[-2])))
+        faces = []
+        if face_service is not None:
+            try:
+                faces = face_service.recognize(frame)
+                with self._condition:
+                    self._face_error = None
+            except Exception as exc:
+                with self._condition:
+                    self._face_error = str(exc)
+        return detections, faces, yolo_ms, started
+
     def _run(self) -> None:
         capture = None
         try:
@@ -524,23 +566,29 @@ class RobotStereoDetectionService:
             import cv2
             import numpy as np
 
-            common = self._load_common()
-            geometry = common.StereoGeometry(self.calibration_path)
-            matcher = common.create_sgbm(self.num_disparities, self.block_size)
             model = None
-
             self._device_name = "depth only"
-            capture = common.StereoRtpCapture(
-                self.left_port,
-                self.right_port,
-                width=self.width,
-                height=self.height,
-                backend=self.capture_backend,
-            )
-            capture.start()
+            if self.camera_source == "d415":
+                from backend.realsense_camera import D415Capture
+                capture = D415Capture()
+                geometry = None
+            else:
+                common = self._load_common()
+                geometry = common.StereoGeometry(self.calibration_path)
+                matcher = common.create_sgbm(self.num_disparities, self.block_size)
+                capture = common.StereoRtpCapture(
+                    self.left_port, self.right_port, width=self.width,
+                    height=self.height, backend=self.capture_backend,
+                )
+            if self.camera_source == "d415":
+                with self._condition:
+                    initial_depth = bool(self._depth_consumers or self._active_views.intersection({"depth", "left", "right"}))
+                capture.start(need_depth=initial_depth)
+            else:
+                capture.start()
             with self._condition:
                 self._state = "waiting"
-                self._baseline_m = round(float(geometry.baseline_m), 4)
+                self._baseline_m = round(float(geometry.baseline_m), 4) if geometry is not None else None
         except Exception as exc:
             self._set_terminal_error(f"Could not start stereo detection: {exc}")
             if capture is not None:
@@ -566,7 +614,11 @@ class RobotStereoDetectionService:
             return disparity, points, (time.monotonic() - started) * 1000.0
 
         depth_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stereo-depth")
+        from backend.vision_inference import LiveInference
+        inference = LiveInference()
+        last_inference_at = 0.0
         previous_time = time.monotonic()
+        next_frame_at = previous_time
         frame_index = 0
         cached_detections: _typing38.List[_typing38.Tuple[int, int, int, int, str, float]] = []
         last_yolo_ms = 0.0
@@ -575,17 +627,28 @@ class RobotStereoDetectionService:
         cached_faces = []
         try:
             while not self._stop_event.is_set():
+                # Pace processing, AI submissions and encoding together. Keep
+                # the camera on its supported hardware profile (e.g. 30 FPS).
+                if self._stop_event.wait(max(0.0, next_frame_at - time.monotonic())):
+                    break
+                next_frame_at = time.monotonic() + 1.0 / self.max_fps
                 with self._condition:
                     detection_active = "detection" in self._active_views
+                    need_depth = bool(self._depth_consumers or self._active_views.intersection({"depth", "left", "right"}))
                 if detection_active and model is None:
                     with self._condition:
                         self._state = "loading"
                     model = self._detection_model()
                 try:
-                    left, right, pair_delta_ms = capture.read_pair(
-                        timeout_s=2.0,
-                        max_delta_ms=self.max_pair_delta_ms,
-                    )
+                    if self.camera_source == "d415":
+                        depth_started = time.monotonic()
+                        left, native_valid, native_points = capture.read(need_depth=need_depth)
+                        right, pair_delta_ms = left, 0.0
+                        native_depth_ms = (time.monotonic() - depth_started) * 1000.0
+                    else:
+                        left, right, pair_delta_ms = capture.read_pair(
+                            timeout_s=2.0, max_delta_ms=self.max_pair_delta_ms,
+                        )
                 except TimeoutError as exc:
                     with self._condition:
                         self._state = "waiting"
@@ -604,55 +667,24 @@ class RobotStereoDetectionService:
                             self._face_error = str(exc)
 
                 processing_started = time.monotonic()
-                left_rectified, right_rectified = geometry.rectify(left, right)
-                # Stereo CPU work overlaps GPU inference on the same rectified pair.
-                depth_future = depth_worker.submit(
-                    compute_depth, left_rectified, right_rectified
-                )
+                if self.camera_source == "d415":
+                    left_rectified, right_rectified = left, right
+                    depth_future = None
+                else:
+                    left_rectified, right_rectified = geometry.rectify(left, right)
+                    depth_future = depth_worker.submit(compute_depth, left_rectified, right_rectified) if need_depth else None
+                    native_valid, native_points, native_depth_ms = None, None, 0.0
                 rectify_ms = (time.monotonic() - processing_started) * 1000.0
                 annotated = left_rectified.copy()
 
+                # Video and metric depth must never wait for YOLO/face inference.
+                completed = inference.poll()
+                if completed is not None:
+                    cached_detections, cached_faces, last_yolo_ms, last_inference_at = completed
+                if time.monotonic() - last_inference_at > 1.0:
+                    cached_detections, cached_faces = [], []
                 if detection_active and model is not None and frame_index % self.detect_every == 0:
-                    options = {
-                        "conf": self.confidence,
-                        "imgsz": self.image_size,
-                        "verbose": False,
-                    }
-                    if self.device is not None:
-                        options["device"] = self.device
-                    yolo_started = time.monotonic()
-                    result = model.predict(left_rectified, **options)[0]
-                    last_yolo_ms = (time.monotonic() - yolo_started) * 1000.0
-                    cached_detections = []
-                    # Transfer all boxes once instead of synchronizing CUDA per field.
-                    for detection in result.boxes.data.detach().cpu().tolist():
-                        x1, y1, x2, y2 = (int(value) for value in detection[:4])
-                        x1 = max(0, min(annotated.shape[1] - 1, x1))
-                        y1 = max(0, min(annotated.shape[0] - 1, y1))
-                        x2 = max(x1 + 1, min(annotated.shape[1], x2))
-                        y2 = max(y1 + 1, min(annotated.shape[0], y2))
-                        class_id = int(detection[-1])
-                        cached_detections.append(
-                            (
-                                x1,
-                                y1,
-                                x2,
-                                y2,
-                                str(result.names[class_id]),
-                                float(detection[-2]),
-                            )
-                        )
-
-                if detection_active and frame_index % self.detect_every == 0:
-                    cached_faces = []
-                    if face_service is not None:
-                        try:
-                            cached_faces = face_service.recognize(left_rectified)
-                            with self._condition:
-                                self._face_error = None
-                        except Exception as exc:
-                            with self._condition:
-                                self._face_error = str(exc)
+                    inference.submit(self._infer_frame, model, face_service, left_rectified.copy())
 
                 for face in cached_faces if detection_active else []:
                     x1, y1, x2, y2 = face["box"]
@@ -661,7 +693,10 @@ class RobotStereoDetectionService:
                     cv2.putText(annotated, face["name"], (x1, max(20, y1 - 7)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
 
-                disparity, points_3d, depth_ms = depth_future.result()
+                disparity, points_3d, depth_ms = (
+                    depth_future.result() if depth_future is not None
+                    else (native_valid, native_points, native_depth_ms)
+                )
                 stereo_ms = rectify_ms + depth_ms
                 obstacle_distance = _region_distance(
                     points_3d,
@@ -671,7 +706,7 @@ class RobotStereoDetectionService:
                     self.max_distance_m,
                     self.distance_mode,
                     self.obstacle_percentile,
-                )
+                ) if points_3d is not None else None
 
                 detection_payload = []
                 for detection_index, detection in enumerate(cached_detections if detection_active else []):
@@ -704,101 +739,104 @@ class RobotStereoDetectionService:
                 instant_fps = 1.0 / max(now - previous_time, 1e-6)
                 fps = instant_fps if self._fps == 0.0 else 0.9 * self._fps + 0.1 * instant_fps
                 previous_time = now
-                depth_view = _depth_heatmap(
-                    points_3d,
-                    disparity,
-                    self.min_distance_m,
-                    self.max_distance_m,
-                )
-                region_left, region_top, region_right, region_bottom = self.obstacle_region
-                region_x1 = int(depth_view.shape[1] * region_left)
-                region_y1 = int(depth_view.shape[0] * region_top)
-                region_x2 = int(depth_view.shape[1] * region_right)
-                region_y2 = int(depth_view.shape[0] * region_bottom)
-                cv2.rectangle(
-                    depth_view,
-                    (region_x1, region_y1),
-                    (region_x2, region_y2),
-                    (80, 230, 230),
-                    2,
-                )
-                obstacle_text = (
-                    "CENTER CLEARANCE: unavailable"
-                    if obstacle_distance is None
-                    else f"CENTER CLEARANCE: {obstacle_distance:.2f} m"
-                )
-                cv2.putText(
-                    depth_view,
-                    obstacle_text,
-                    (region_x1, max(20, region_y1 - 8)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (80, 230, 230),
-                    2,
-                    cv2.LINE_AA,
-                )
-                camera_color = (
-                    (0, 255, 255) if obstacle_distance is not None else (0, 0, 255)
-                )
-                left_view = left_rectified.copy()
-                right_view = right_rectified.copy()
-                for camera_view in (left_view, right_view):
+                depth_view, left_view, right_view = None, left_rectified, right_rectified
+                if points_3d is not None:
+                    depth_view = _depth_heatmap(
+                        points_3d,
+                        disparity,
+                        self.min_distance_m,
+                        self.max_distance_m,
+                    )
+                    region_left, region_top, region_right, region_bottom = self.obstacle_region
+                    region_x1 = int(depth_view.shape[1] * region_left)
+                    region_y1 = int(depth_view.shape[0] * region_top)
+                    region_x2 = int(depth_view.shape[1] * region_right)
+                    region_y2 = int(depth_view.shape[0] * region_bottom)
                     cv2.rectangle(
-                        camera_view,
+                        depth_view,
                         (region_x1, region_y1),
                         (region_x2, region_y2),
-                        camera_color,
+                        (80, 230, 230),
                         2,
                     )
-                cv2.putText(
-                    left_view,
-                    obstacle_text,
-                    (10, 27),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65,
-                    camera_color,
-                    2,
-                    cv2.LINE_AA,
-                )
-                cv2.putText(
-                    right_view,
-                    f"PAIR DELTA: {pair_delta_ms:.1f} ms",
-                    (10, 27),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65,
-                    camera_color,
-                    2,
-                    cv2.LINE_AA,
-                )
-                ok_detection, detection_jpeg = cv2.imencode(
-                    ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 82]
-                )
-                ok_left, left_jpeg = cv2.imencode(
-                    ".jpg", left_view, [cv2.IMWRITE_JPEG_QUALITY, 82]
-                )
-                right_jpeg = None
-                ok_right = True
-                if "right" in self._active_views:
-                    ok_right, right_jpeg = cv2.imencode(
-                        ".jpg", right_view, [cv2.IMWRITE_JPEG_QUALITY, 82]
+                    obstacle_text = (
+                        "CENTER CLEARANCE: unavailable"
+                        if obstacle_distance is None
+                        else f"CENTER CLEARANCE: {obstacle_distance:.2f} m"
                     )
-                ok_depth, depth_jpeg = cv2.imencode(
-                    ".jpg", depth_view, [cv2.IMWRITE_JPEG_QUALITY, 82]
-                )
-                if not all((ok_detection, ok_left, ok_right, ok_depth)):
-                    raise RobotStereoError("Could not encode stereo output frames.")
+                    cv2.putText(
+                        depth_view,
+                        obstacle_text,
+                        (region_x1, max(20, region_y1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (80, 230, 230),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                    camera_color = (
+                        (0, 255, 255) if obstacle_distance is not None else (0, 0, 255)
+                    )
+                    left_view = left_rectified.copy()
+                    right_view = right_rectified.copy()
+                    for camera_view in (left_view, right_view):
+                        cv2.rectangle(
+                            camera_view,
+                            (region_x1, region_y1),
+                            (region_x2, region_y2),
+                            camera_color,
+                            2,
+                        )
+                    cv2.putText(
+                        left_view,
+                        obstacle_text,
+                        (10, 27),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.65,
+                        camera_color,
+                        2,
+                        cv2.LINE_AA,
+                    )
+                    cv2.putText(
+                        right_view,
+                        f"PAIR DELTA: {pair_delta_ms:.1f} ms",
+                        (10, 27),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.65,
+                        camera_color,
+                        2,
+                        cv2.LINE_AA,
+                    )
+                with self._condition:
+                    output_views = set(self._active_views)
+
+                def encode_view(view, image):
+                    if view not in output_views or image is None:
+                        return None
+                    ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 92])
+                    if not ok:
+                        raise RobotStereoError("Could not encode camera output frame.")
+                    return encoded
+
+                detection_jpeg = encode_view("detection", annotated)
+                left_jpeg = encode_view("left", left_view)
+                right_jpeg = encode_view("right", right_view)
+                depth_jpeg = encode_view("depth", depth_view)
 
                 with self._condition:
-                    if "detection" in self._active_views:
+                    if "detection" in self._active_views and "detection" in output_views and detection_jpeg is not None:
                         self._frames["detection"] = detection_jpeg.tobytes()
-                    if "left" in self._active_views:
+                    if "left" in self._active_views and "left" in output_views and left_jpeg is not None:
                         self._frames["left"] = left_jpeg.tobytes()
-                    if "right" in self._active_views:
+                    if "right" in self._active_views and "right" in output_views and right_jpeg is not None:
                         assert right_jpeg is not None
                         self._frames["right"] = right_jpeg.tobytes()
-                    if "depth" in self._active_views:
+                    if "depth" in self._active_views and "depth" in output_views and depth_jpeg is not None:
                         self._frames["depth"] = depth_jpeg.tobytes()
+                    self._frame_size = (left_rectified.shape[1], left_rectified.shape[0])
                     self._sequence += 1
+                    if points_3d is not None:
+                        self._depth_sequence = self._sequence
                     self._last_frame_at = time.time()
                     self._detections = detection_payload
                     self._faces = cached_faces if detection_active else []
@@ -818,6 +856,7 @@ class RobotStereoDetectionService:
             if not self._stop_event.is_set():
                 self._set_terminal_error(f"Stereo processing stopped: {exc}")
         finally:
+            inference.close()
             depth_worker.shutdown(wait=True)
             capture.stop()
 
@@ -830,6 +869,10 @@ class RobotStereoDetectionService:
                 else None
             )
             return {
+                "camera_source": self.camera_source,
+                "preview_mode": "native-rgb-v2" if self.camera_source == "d415" else "rectified-stereo",
+                "frame_size": self._frame_size,
+                "camera_source_locked": bool(self._depth_consumers) or (self._thread is not None and self._thread.is_alive()),
                 "configured": self._configuration_error("depth") is None,
                 "view_configured": {
                     "detection": self._configuration_error("detection") is None,
@@ -850,11 +893,13 @@ class RobotStereoDetectionService:
                 "object_detection_enabled": self.enable_object_detection,
                 "detection_model_cached": self._cached_model is not None,
                 "frame_sequence": self._sequence,
+                "depth_frame_sequence": self._depth_sequence,
                 "last_frame_age_seconds": age,
                 "detections": list(self._detections) if self._state == "connected" else [],
                 "faces": list(self._faces) if self._state == "connected" and "detection" in self._active_views else [],
                 "face_recognition_error": self._face_error,
                 "fps": round(self._fps, 1),
+                "max_fps": self.max_fps,
                 "stereo_ms": round(self._stereo_ms, 1),
                 "yolo_ms": round(self._yolo_ms, 1),
                 "pair_delta_ms": round(self._pair_delta_ms, 1),

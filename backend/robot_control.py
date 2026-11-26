@@ -530,6 +530,8 @@ class RobotControlService:
         vy: float,
         omega: float,
         duration_seconds: float,
+        *,
+        stop_event: _typing38.Union[threading.Event, None] = None,
     ) -> _typing38.Dict[str, object]:
         """Send a bounded custom velocity command, then stop it explicitly."""
         values = (vx, vy, omega, duration_seconds)
@@ -549,10 +551,15 @@ class RobotControlService:
             self._require_arm_ready()
             client = self._client_instance()
             self._require_locomotion(client)
+            if stop_event is not None and stop_event.is_set():
+                return {"ok": True, "cancelled": True, **self.status()}
             code = client.SetVelocity(vx, vy, omega, duration_seconds)
             self._require_velocity_success(code, "custom velocity movement")
             self._set_result("custom_velocity", code=code)
-            time.sleep(duration_seconds)
+            if stop_event is None:
+                time.sleep(duration_seconds)
+            else:
+                stop_event.wait(duration_seconds)
             code = client.SetVelocity(0.0, 0.0, 0.0, COMMAND_DURATION)
             self._require_velocity_success(code, "stop custom velocity movement")
             self._set_result("stop", code=code)

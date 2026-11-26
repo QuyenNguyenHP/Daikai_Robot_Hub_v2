@@ -1,3 +1,4 @@
+import { CameraSourceSelect } from '../components/CameraSourceSelect'
 import { useEffect, useState } from 'react'
 import {
   getRobotAutoWalkWebSocketUrl,
@@ -29,6 +30,7 @@ export function ObjectDistancePage() {
   const [stereo, setStereo] = useState(null)
   const [walk, setWalk] = useState(null)
   const [busyAction, setBusyAction] = useState('')
+  const [walkBusyAction, setWalkBusyAction] = useState('')
   const [error, setError] = useState('')
   const [streamVersion, setStreamVersion] = useState(0)
   const [settings, setSettings] = useState({
@@ -82,26 +84,26 @@ export function ObjectDistancePage() {
   const updateSetting = (name) => (event) => setSettings((current) => ({ ...current, [name]: Number(event.target.value) }))
 
   const startWalk = async () => {
-    setBusyAction('start-walk')
+    setWalkBusyAction('start-walk')
     setError('')
     try {
       setWalk(await startRobotAutoWalk(settings))
     } catch (requestError) {
       setError(requestError.message)
     } finally {
-      setBusyAction('')
+      setWalkBusyAction('')
     }
   }
 
   const stopWalk = async () => {
-    setBusyAction('stop-walk')
+    setWalkBusyAction('stop-walk')
     setError('')
     try {
       setWalk(await stopRobotAutoWalk())
     } catch (requestError) {
       setError(requestError.message)
     } finally {
-      setBusyAction('')
+      setWalkBusyAction('')
     }
   }
 
@@ -143,8 +145,10 @@ export function ObjectDistancePage() {
   return (
     <div className="object-distance-page">
       <section className="stereo-page-heading">
-        <div><h1>Autonomous Walk</h1><p>Stereo distance uses the left and right cameras to check the center travel corridor.</p></div>
+        <div><h1>Autonomous Walk</h1><p>The selected camera measures depth to check the center travel corridor.</p></div>
         <div className="stereo-page-actions">
+          <CameraSourceSelect status={stereo} disabled={running || Boolean(busyAction) || Boolean(walkBusyAction)}
+            onStatus={setStereo} onError={setError} />
           <span className={`status-pill ${stereo?.views?.depth ? 'live' : ''}`}><i /> {stereo?.views?.depth ? 'Distance live' : 'Distance off'}</span>
           {stereo?.views?.depth
             ? <button type="button" className="button secondary" disabled={Boolean(busyAction)} onClick={stopDistance}>{busyAction === 'stop-distance' ? 'Stopping…' : 'Stop distance monitor'}</button>
@@ -159,22 +163,22 @@ export function ObjectDistancePage() {
           <div><p className="eyebrow">ROUTE SETTINGS</p><h2>Walk and avoid obstacles</h2></div>
           <div className="auto-walk-actions">
             {running
-              ? <button type="button" className="button danger" disabled={Boolean(busyAction)} onClick={stopWalk}>{busyAction === 'stop-walk' ? 'Stopping…' : 'Stop walking'}</button>
-              : <button type="button" className="button primary" disabled={Boolean(busyAction) || walk?.configured === false} onClick={startWalk}>{busyAction === 'start-walk' ? 'Starting…' : 'Start autonomous walk'}</button>}
+              ? <button type="button" className="button danger" disabled={walkBusyAction === 'stop-walk' || walk?.stop_requested} onClick={stopWalk}>{walkBusyAction === 'stop-walk' || walk?.stop_requested ? 'Stopping…' : 'Stop walking'}</button>
+              : <button type="button" className="button primary" disabled={Boolean(busyAction) || Boolean(walkBusyAction) || walk?.configured === false} onClick={startWalk}>{walkBusyAction === 'start-walk' ? 'Starting…' : 'Start autonomous walk'}</button>}
           </div>
         </div>
         <div className="auto-walk-settings">
-          {fields.map(([name, label, min, max, step, unit]) => <label key={name}><span>{label}</span><div><input type="number" value={settings[name]} min={min} max={max} step={step} disabled={running || Boolean(busyAction)} onChange={updateSetting(name)} /><small>{unit}</small></div></label>)}
+          {fields.map(([name, label, min, max, step, unit]) => <label key={name}><span>{label}</span><div><input type="number" value={settings[name]} min={min} max={max} step={step} disabled={running || Boolean(busyAction) || Boolean(walkBusyAction)} onChange={updateSetting(name)} /><small>{unit}</small></div></label>)}
         </div>
         <div className="auto-walk-status"><div className={`auto-walk-event ${event?.type || ''}`}><strong>{event?.message || 'Ready to start.'}</strong>{event?.distance_m != null && <span>Measured clearance: {event.distance_m.toFixed(2)} m</span>}{event?.completed_steps != null && <span>{event.completed_steps}/{event.target_steps} steps · {event.completed_turns} right turn(s)</span>}</div></div>
         {walk?.events?.some((item) => ['step', 'turn'].includes(item.type)) && <div className="auto-walk-history">{walk.events.filter((item) => ['step', 'turn'].includes(item.type)).map((item, index) => <div className={item.type} key={`${item.type}-${index}`}><strong>{item.type === 'step' ? 'Forward' : 'Turn right'}</strong><span>{item.message} Clearance {item.distance_m.toFixed(2)} m.</span></div>)}</div>}
       </section>
 
       <div className="distance-camera-grid">
-        <Monitor title="Left camera" view="left" running={Boolean(stereo?.views?.left)} streamVersion={streamVersion} />
-        <Monitor title="Metric depth heatmap" view="depth" running={Boolean(stereo?.views?.depth)} streamVersion={streamVersion} />
+        <Monitor title={stereo?.camera_source === 'd415' ? 'D415 camera' : 'Left camera'} view="left" running={busyAction !== 'stop-distance' && Boolean(stereo?.views?.left)} streamVersion={streamVersion} />
+        <Monitor title="Metric depth heatmap" view="depth" running={busyAction !== 'stop-distance' && Boolean(stereo?.views?.depth)} streamVersion={streamVersion} />
       </div>
-      <section className="panel stereo-metrics-panel center-corridor-panel"><p className="eyebrow">CENTER TRAVEL CORRIDOR</p><h2>{stereo?.obstacle_distance_m == null ? 'No reliable depth' : `${stereo.obstacle_distance_m.toFixed(2)} m clearance`}</h2><p>The highlighted center rectangle is the only image region used to decide whether the robot moves forward or turns right.</p><div className="stereo-metrics"><div><strong>{stereo?.fps ?? '—'}</strong><span>FPS</span></div><div><strong>{stereo?.stereo_ms ?? '—'}</strong><span>Stereo ms</span></div><div><strong>2</strong><span>Cameras used for depth</span></div><div><strong>{stereo?.pair_delta_ms ?? '—'}</strong><span>Pair delta ms</span></div></div></section>
+      <section className="panel stereo-metrics-panel center-corridor-panel"><p className="eyebrow">CENTER TRAVEL CORRIDOR</p><h2>{stereo?.obstacle_distance_m == null ? 'No reliable depth' : `${stereo.obstacle_distance_m.toFixed(2)} m clearance`}</h2><p>The highlighted center rectangle is the only image region used to decide whether the robot moves forward or turns right.</p><div className="stereo-metrics"><div><strong>{stereo?.fps ?? '—'}</strong><span>FPS</span></div><div><strong>{stereo?.stereo_ms ?? '—'}</strong><span>Stereo ms</span></div><div><strong>{stereo?.camera_source === 'd415' ? 'D415' : 'Robot stereo'}</strong><span>Depth source</span></div><div><strong>{stereo?.pair_delta_ms ?? '—'}</strong><span>Pair delta ms</span></div></div></section>
       <p className="stereo-safety-note">Stereo depth is a perception estimate, not a safety-rated collision sensor. Keep the emergency stop ready.</p>
     </div>
   )

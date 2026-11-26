@@ -41,6 +41,7 @@ class RobotAutoWalkService:
             running = self._thread is not None and self._thread.is_alive()
             return {
                 "configured": bool(self.controller.network_interface), "running": running,
+                "stop_requested": running and self._stop_event.is_set(),
                 "state": "running" if running else ("error" if self._error else "stopped"),
                 "settings": dict(self._settings), "event": dict(self._event) if self._event else None,
                 "events": [dict(event) for event in self._events], "output": [],
@@ -78,7 +79,9 @@ class RobotAutoWalkService:
             status = self.detector.status()
             if status.get("state") == "error":
                 raise RobotStereoError(str(status.get("error") or "Stereo depth error."))
-            if status.get("connected") and int(status.get("frame_sequence", 0)) > after_sequence:
+            if (status.get("connected")
+                    and int(status.get("frame_sequence", 0)) > after_sequence
+                    and status.get("depth_frame_sequence", status.get("frame_sequence")) == status.get("frame_sequence")):
                 return status
             time.sleep(0.1)
         if self._stop_event.is_set():
@@ -132,19 +135,23 @@ class RobotAutoWalkService:
                         break
                     turns += 1
                     motion_cleanup_needed = True
-                    self.controller.execute_velocity(0.0, 0.0, -float(settings["turn_speed_rad_s"]), 1.0)
+                    self.controller.execute_velocity(0.0, 0.0, -float(settings["turn_speed_rad_s"]), 1.0, stop_event=self._stop_event)
                     motion_cleanup_needed = False
+                    if self._stop_event.is_set():
+                        raise InterruptedError
                     self._publish("turn", f"Right turn {turns} completed.", completed_steps=completed, target_steps=settings["forward_steps"], completed_turns=turns, distance_m=round(float(distance), 3))
                 else:
                     motion_cleanup_needed = True
-                    self.controller.execute_velocity(float(settings["forward_speed_m_s"]), 0.0, 0.0, 1.0)
+                    self.controller.execute_velocity(float(settings["forward_speed_m_s"]), 0.0, 0.0, 1.0, stop_event=self._stop_event)
                     motion_cleanup_needed = False
+                    if self._stop_event.is_set():
+                        raise InterruptedError
                     completed += 1
                     self._publish("step", f"Forward step {completed}/{settings['forward_steps']} completed.", completed_steps=completed, target_steps=settings["forward_steps"], completed_turns=turns, distance_m=round(float(distance), 3))
                 last_sequence = int(self.detector.status().get("frame_sequence", last_sequence))
                 # Do not keep the UI in "Stop walking" after the final step.
                 if completed < int(settings["forward_steps"]):
-                    time.sleep(0.6)
+                    self._stop_event.wait(0.6)
             if self._stop_event.is_set():
                 self._publish("stopped", "Autonomous walk stopped.")
             elif not blocked:
@@ -168,10 +175,10 @@ class RobotAutoWalkService:
 
     def stop(self) -> _typing38.Dict[str, Any]:
         self._stop_event.set()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=5.0)
         return self.status()
 
     def shutdown(self) -> None:
         self.stop()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5.0)

@@ -504,3 +504,68 @@ retained RAM/VRAM for quicker restarts; restarting the backend clears the cache.
 No inference resolution, thresholds, calibration or model weights were changed
 by this optimization. `detection_model_cached` in stereo status reports whether
 a detector has already been loaded.
+
+### Optional RealSense D415 camera
+
+Console and Autonomous Walk share a **Camera** selector: robot stereo cameras
+(default) or **Intel RealSense D415 (USB)**. Stop all camera views and autonomous
+walking before switching. The selection applies to both pages and resets to robot
+stereo when the backend restarts.
+
+Connect the D415 by USB to the machine running the backend, and install the
+RealSense SDK Python binding (`pyrealsense2`) in that backend's Python environment.
+Optionally set `R1_D415_SERIAL` to select one D415 when several are connected.
+D415 capture uses 640×480 depth and 1280×720 native color at 30 FPS.
+Set `R1_D415_COLOR_WIDTH=640` and `R1_D415_COLOR_HEIGHT=480` for lower bandwidth.
+Console always copies native RGB before alignment; depth processing runs only
+when a depth view or autonomous walking requests it. Depth aligns to color
+and uses SDK metric points for the existing center-clearance and walking logic.
+Robot stereo calibration and RTP streams are not used for this source.
+YOLO and face-recognition dependencies are still required for Console Vision.
+Validate camera mounting, forward alignment, and clearance measurements on the
+robot before using autonomous walking with this source.
+
+Vision runs YOLO and face recognition in one separate worker, with at most one
+inference in progress and no queued camera frames. Preview and clearance updates
+continue while inference runs; AI overlays expire after one second to avoid
+showing stale boxes. Only subscribed views are JPEG-encoded (quality 92).
+Console displays preview FPS and YOLO inference time for performance diagnosis.
+
+The Console status line shows `native-rgb-v2` and the captured resolution for
+D415. Restart the backend and reload the frontend after updating; this marker
+confirms that the new RGB path is running. Holes in depth never mask the preview.
+
+FSM WebSocket queries run in the thread pool so Unitree RPC timeouts cannot block
+video delivery on the ASGI event loop. An FSM/ClientStub error still indicates
+a robot communication problem; this change isolates its effect on the video.
+
+Console alone opens the D415 color stream only: no USB depth stream, alignment,
+point cloud, heatmap, or distance calculation. Opening Autonomous Walk's distance
+monitor or starting a walk enables depth; removing the last depth consumer
+returns the D415 to color-only capture. Reconfiguring the USB streams can cause
+a brief preview pause. Robot stereo also skips depth matching for Console-only
+use. The legacy generic start endpoint now starts the detection view only.
+
+D415 startup checks SDK profile compatibility and falls back from the preferred
+color size at 30 FPS to 640×480 at 30/15 FPS, then SDK-selected resolution/FPS.
+Every attempt explicitly enables color only for Console; walking includes depth.
+If no profile starts, the error lists attempted configurations instead of only
+reporting "Couldn't resolve requests". The selected request is logged at startup;
+the Console resolution/FPS line shows the running image size and processing rate.
+
+The shared vision worker is paced at a maximum of 20 processed/output frames per
+second, including AI submissions and JPEG encoding. Camera capture retains a
+supported SDK hardware profile; a 20 FPS hardware profile is not requested.
+
+Stop requests acknowledge cancellation without waiting for a walking/camera
+thread to join. Walking waits are interruptible and send zero velocity when
+cancelled; a pending Unitree RPC still has to finish or time out. WebSocket
+status exposes `stop_requested` until the worker actually exits. Releasing a
+walk's depth consumer leaves any visible monitor running and does not join it.
+
+Frontend stop requests time out after eight seconds with an explicit warning
+that the action may still be pending. Walking and distance-monitor buttons use
+separate pending states, so a monitor request does not block Stop walking.
+Distance streams detach while their stop request is pending. Camera stop
+endpoints run directly on the event loop to avoid waiting behind streaming
+thread-pool work; they only signal cancellation and return the current status.

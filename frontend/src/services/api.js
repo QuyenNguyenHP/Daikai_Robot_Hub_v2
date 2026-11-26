@@ -13,16 +13,31 @@ function webSocketUrl(path) {
 }
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_URL}${path}`, options)
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const detail = payload.detail
-    const message = typeof detail === 'string'
-      ? detail
-      : detail?.message || `Request failed (${response.status})`
-    throw new Error(message)
+  const { timeoutMs = 30000, ...fetchOptions } = options
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${API_URL}${path}`, { ...fetchOptions, signal: controller.signal })
+    const payload = await response.json().catch((error) => {
+      if (controller.signal.aborted) throw error
+      return {}
+    })
+    if (!response.ok) {
+      const detail = payload.detail
+      const message = typeof detail === 'string'
+        ? detail
+        : detail?.message || `Request failed (${response.status})`
+      throw new Error(message)
+    }
+    return payload
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('No response from backend. The action may still be pending; check the live status before retrying.')
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-  return payload
 }
 
 export const getHealth = () => request('/api/health')
@@ -145,7 +160,7 @@ export const startRobotStereo = () => (
 )
 
 export const stopRobotStereo = () => (
-  request('/api/robot/stereo/stop', { method: 'POST' })
+  request('/api/robot/stereo/stop', { method: 'POST', timeoutMs: 8000 })
 )
 
 export const startRobotStereoView = (view) => (
@@ -153,7 +168,7 @@ export const startRobotStereoView = (view) => (
 )
 
 export const stopRobotStereoView = (view) => (
-  request(`/api/robot/stereo/stop/${view}`, { method: 'POST' })
+  request(`/api/robot/stereo/stop/${view}`, { method: 'POST', timeoutMs: 8000 })
 )
 
 export function setRobotStereoClasses(classes) {
@@ -183,7 +198,7 @@ export function startRobotAutoWalk(settings) {
 }
 
 export const stopRobotAutoWalk = () => (
-  request('/api/robot/auto-walk/stop', { method: 'POST' })
+  request('/api/robot/auto-walk/stop', { method: 'POST', timeoutMs: 8000 })
 )
 
 export const getRobotIMUWebSocketUrl = () => webSocketUrl('/api/robot/imu/ws')
@@ -204,3 +219,7 @@ export function enrollFace(name, files) {
   files.forEach((file) => body.append('images', file))
   return request('/api/vision/enroll', { method: 'POST', body })
 }
+
+export const setRobotCameraSource = (source) => request(
+  '/api/robot/stereo/camera-source', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source }) },
+)

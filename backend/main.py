@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from starlette.concurrency import run_in_threadpool
+
 import typing as _typing38
 import asyncio
 import os
@@ -427,7 +429,7 @@ async def robot_mode_websocket(websocket: WebSocket) -> None:
     try:
         while True:
             try:
-                payload = control.mode()
+                payload = await run_in_threadpool(control.mode)
                 payload["error"] = None
             except RobotControlBusyError as error:
                 payload = {"error": str(error), "control_busy": True}
@@ -633,6 +635,23 @@ def robot_stereo_detection(request: Request) -> RobotStereoDetectionService:
     return request.app.state.robot_stereo_detection
 
 
+class CameraSourceRequest(BaseModel):
+    source: Literal["stereo", "d415"]
+
+
+@app.post("/api/robot/stereo/camera-source")
+def set_robot_camera_source(request: Request, payload: CameraSourceRequest) -> _typing38.Dict[str, object]:
+    try:
+        with request.app.state.camera_start_lock:
+            if robot_auto_walk(request).status()["running"]:
+                raise RobotStereoStateError("Stop autonomous walking before changing camera.")
+            detector = robot_stereo_detection(request)
+            detector.set_camera_source(payload.source)
+            return detector.status()
+    except RobotStereoError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 class StereoClassesRequest(BaseModel):
     classes: _typing38.List[str] = Field(min_length=1, max_length=30)
 
@@ -669,13 +688,14 @@ async def robot_auto_walk_status_websocket(websocket: WebSocket) -> None:
 @app.post("/api/robot/auto-walk/start")
 def start_robot_auto_walk(request: Request, payload: AutoWalkRequest) -> _typing38.Dict[str, object]:
     try:
-        return robot_auto_walk(request).start(**payload.dict())
+        with request.app.state.camera_start_lock:
+            return robot_auto_walk(request).start(**payload.dict())
     except RobotAutoWalkError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @app.post("/api/robot/auto-walk/stop")
-def stop_robot_auto_walk(request: Request) -> _typing38.Dict[str, object]:
+async def stop_robot_auto_walk(request: Request) -> _typing38.Dict[str, object]:
     return robot_auto_walk(request).stop()
 
 
@@ -728,14 +748,14 @@ def start_robot_stereo_view(
 
 
 @app.post("/api/robot/stereo/stop")
-def stop_robot_stereo(request: Request) -> _typing38.Dict[str, object]:
+async def stop_robot_stereo(request: Request) -> _typing38.Dict[str, object]:
     detector = robot_stereo_detection(request)
     detector.stop()
     return detector.status()
 
 
 @app.post("/api/robot/stereo/stop/{view}")
-def stop_robot_stereo_view(
+async def stop_robot_stereo_view(
     request: Request,
     view: Literal["detection", "left", "right", "depth"],
 ) -> _typing38.Dict[str, object]:

@@ -1,3 +1,4 @@
+import { CameraSourceSelect } from './CameraSourceSelect'
 import { HudIcon } from './HudIcon'
 import { FaceEnrollmentDialog } from './FaceEnrollmentDialog'
 import { useEffect, useState } from 'react'
@@ -84,14 +85,17 @@ export function VideoStreamingPanel() {
         </span>
       </div>
 
+      <CameraSourceSelect status={status} disabled={busy} onStatus={setStatus}
+        onError={(text) => setMessage({ type: 'error', text })} />
       <p className="video-stream-description">
-        Person detection and face recognition using the stereo cameras on UDP ports{' '}
-        {status?.ports?.left || 5002} and {status?.ports?.right || 5003}.
+        {status?.camera_source === 'd415'
+          ? 'Person detection and face recognition using the USB RealSense D415.'
+          : `Person detection and face recognition using the stereo cameras on UDP ports ${status?.ports?.left || 5002} and ${status?.ports?.right || 5003}.`}
       </p>
 
       <div
         className={`video-viewer ${running ? 'active' : ''}`}
-        style={{ aspectRatio: '544 / 448' }}
+        style={{ aspectRatio: status?.frame_size ? status.frame_size.join(' / ') : status?.camera_source === 'd415' ? '16 / 9' : '544 / 448' }}
       >
         {running ? (
           <img
@@ -124,7 +128,7 @@ export function VideoStreamingPanel() {
 
       {status?.error && <p className="error-message">{status.error}</p>}
       {status?.face_recognition_error && <p className="error-message">Face recognition unavailable: {status.face_recognition_error}</p>}
-      {running && <p className="video-stream-description">People: {status?.detections?.length || 0} · Faces: {status?.faces?.length || 0}</p>}
+      {running && <p className="video-stream-description">{status?.frame_size?.join('×') || ''} {status?.camera_source === 'd415' ? status?.preview_mode : ''} · FPS: {status?.fps ?? 0} · AI: {status?.yolo_ms ?? 0} ms · People: {status?.detections?.length || 0} · Faces: {status?.faces?.length || 0}</p>}
       {running && status?.faces?.length > 0 && <p className="video-stream-description">Faces: {status.faces.map((face) => face.name).join(', ')}</p>}
       {message && <p className={`${message.type}-message`}>{message.text}</p>}
       {running && status?.detections?.length > 0 && (
