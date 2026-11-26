@@ -418,6 +418,13 @@ python -c "import fastapi, cv2; from unitree_sdk2py.go2.video.video_client impor
 
 ## Console IMU and Vision
 
+The backend reads the latest IMU sample at up to **20 Hz** (one read every
+50 ms plus processing time). The DDS reader uses best-effort delivery and a
+one-sample history, so old LowState samples are discarded before Python
+deserialization instead of processing the robot's roughly 1 kHz stream.
+This changes the backend's consumption rate; it does not change the robot's
+publication rate or its control loop.
+
 The console subscribes to `/api/robot/imu/ws` (5 updates/second). The backend
 reads `unitree_hg/LowState_` on `rt/lowstate`, configurable with
 `UNITREE_IMU_TOPIC`, using `UNITREE_NETWORK_INTERFACE`. Readings include RPY

@@ -6,6 +6,9 @@ import time
 from backend.robot_battery import RobotBatteryService
 
 
+IMU_READ_HZ = 20
+
+
 class RobotIMUService(RobotBatteryService):
     """Reuse the telemetry subscription lifecycle with the R1 LowState type."""
 
@@ -15,6 +18,10 @@ class RobotIMUService(RobotBatteryService):
     def _message_type(self):
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
         return LowState_
+
+    def _create_subscriber(self, message_type):
+        from backend.telemetry_subscriber import LatestTelemetrySubscriber
+        return LatestTelemetrySubscriber(self.topic, message_type, interval=1.0 / IMU_READ_HZ)
 
     def _handle_message(self, message):
         imu = message.imu_state

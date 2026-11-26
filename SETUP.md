@@ -475,6 +475,26 @@ cat /sys/class/net/eth10/carrier
 curl --max-time 15 -i http://127.0.0.1:8010/api/robot/services
 ```
 
+## Lưu ý trên Orin: giới hạn đọc IMU ở 20 Hz
+
+Robot có thể phát `rt/lowstate` khoảng 1.000 bản tin/giây. Backend chỉ cần
+đọc IMU để hiển thị, nên `IMU_READ_HZ = 20` trong `backend/robot_imu.py`
+giới hạn việc đọc vào Python ở tối đa 20 bản tin/giây. DDS dùng best-effort
+và history một mẫu để luôn lấy mẫu mới nhất, không xử lý hàng đợi bản tin cũ.
+Đây là giới hạn phía backend, không thay đổi tần số phát hay vòng điều khiển robot.
+
+Giữ cơ chế này khi triển khai trên Orin; không quay lại callback Python cho
+từng bản tin LowState 1 kHz. Trong lần kiểm tra triển khai, backend có tải CPU
+cao, mất gói ở socket DDS và timeout RPC `3104`; tiến trình SDK riêng vẫn đọc
+được FSM. Giảm tải IMU là biện pháp xử lý cần kiểm chứng trong backend đầy đủ,
+không phải bằng chứng rằng mọi lỗi `3104` đều do IMU.
+
+Sau khi đồng bộ source, khởi động lại backend để áp dụng. Kiểm tra trạng thái
+FSM và mức tăng `message_count` ở `GET /api/robot/imu` (khoảng 20/giây khi có
+dữ liệu), rồi kiểm tra lại khi bật camera/AI. WebSocket IMU vẫn gửi 5 lần/giây.
+`3104` nghĩa là hết thời gian chờ phản hồi, không xác nhận robot đã từ chối
+lệnh; kiểm tra trạng thái robot trước khi gửi lại lệnh chuyển chế độ.
+
 ## XR teleoperation: môi trường riêng cho `robot_teleoperation.py`
 
 `backend/robot_teleoperation.py` là bộ quản lý subprocess được backend gọi qua

@@ -77,11 +77,14 @@ class RobotBatteryService:
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import BmsState_
         return BmsState_
 
+    def _create_subscriber(self, message_type):
+        from unitree_sdk2py.core.channel import ChannelSubscriber
+        return ChannelSubscriber(self.topic, message_type)
+
     def _subscribe(self) -> None:
         try:
             from unitree_sdk2py.core.channel import (
                 ChannelFactoryInitialize,
-                ChannelSubscriber,
             )
             message_type = self._message_type()
         except ImportError as exc:
@@ -97,7 +100,7 @@ class RobotBatteryService:
                 # initialization failures during backend startup.
                 with UNITREE_DDS_INIT_LOCK:
                     ChannelFactoryInitialize(0, self.network_interface)
-                    subscriber = ChannelSubscriber(self.topic, message_type)
+                    subscriber = self._create_subscriber(message_type)
                     subscriber.Init(self._handle_message, 10)
                 self._subscriber = subscriber
                 with self._lock:

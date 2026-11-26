@@ -319,6 +319,11 @@ class RobotControlService:
 
     @staticmethod
     def _require_success(code: int, action: str) -> None:
+        if code == 3104:
+            raise RobotControlError(
+                f"Timed out waiting for {action.replace('_', ' ')} response (code 3104). "
+                "The command outcome is unknown; check the robot state before retrying."
+            )
         if code != 0:
             raise RobotControlError(
                 f"Robot rejected {action.replace('_', ' ')} with code {code}."
